@@ -2,7 +2,7 @@
 
 A Windows 11 tray app that shows the battery percentage of a Razer DeathAdder V3 Pro, connected through the HyperSpeed dongle or the USB cable.
 
-- The tray icon shows the battery percentage. It turns amber at 20% or below and green while charging.
+- The tray icon shows the battery percentage, e.g. `87%`. The text turns amber at 20% or below and green while charging, and is white or near-black to suit a dark or light taskbar.
 - The tooltip and menu show the model, percentage and charging state, or **Asleep** when the dongle is plugged in but the mouse does not answer (or reports 0% while not charging).
 - A notification appears once when the battery drops to 20% and again at 10%.
 - The battery is read every 60 seconds. **Refresh now** in the menu reads it immediately.
