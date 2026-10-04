@@ -39,7 +39,7 @@ export interface HidTransport {
   open(path: string): Promise<HidHandle>;
 }
 
-export interface ReadOptions {
+export interface PollOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -52,7 +52,7 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 
 export async function pollBattery(
   transport: HidTransport,
-  { sleep = defaultSleep }: ReadOptions = {},
+  { sleep = defaultSleep }: PollOptions = {},
 ): Promise<Poll> {
   let devices: HidDeviceInfo[];
   try {
