@@ -79,7 +79,10 @@ function menu(startsAtLogin: boolean): Menu {
 function trayIcon({ iconText, tone }: TrayDisplay): NativeImage {
   const image = nativeImage.createEmpty();
   for (const scaleFactor of ICON_SCALES) {
-    image.addRepresentation({ scaleFactor, buffer: renderIcon(iconText, tone, 16 * scaleFactor) });
+    image.addRepresentation({
+      scaleFactor,
+      buffer: renderIcon(iconText, tone, 16 * scaleFactor, "dark"),
+    });
   }
   return image;
 }

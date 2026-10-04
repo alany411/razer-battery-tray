@@ -1,6 +1,8 @@
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { renderIcon } from "./tray-icon.js";
+import type { Taskbar } from "./tray-icon.js";
+import type { Tone } from "./tray-display.js";
 
 interface Image {
   format: [number, number];
@@ -41,45 +43,73 @@ function decodePng(png: Buffer): Image {
   };
 }
 
-function whitePixels(image: Image): { x: number; y: number }[] {
-  const found = [];
+type Pixel = { x: number; y: number; color: [number, number, number] };
+
+/** Every pixel that is not fully transparent. */
+function ink(image: Image): Pixel[] {
+  const found: Pixel[] = [];
   for (let y = 0; y < image.height; y++) {
     for (let x = 0; x < image.width; x++) {
-      const [r, g, b] = image.pixel(x, y);
-      if (r === 255 && g === 255 && b === 255) found.push({ x, y });
+      const [r, g, b, a] = image.pixel(x, y);
+      if (a !== 0) found.push({ x, y, color: [r, g, b] });
     }
   }
   return found;
 }
 
+function inkOf(text: string, tone: Tone = "normal", size = 16, taskbar: Taskbar = "dark"): Pixel[] {
+  return ink(decodePng(renderIcon(text, tone, size, taskbar)));
+}
+
 function inkHeight(text: string, size: number): number {
-  const ys = whitePixels(decodePng(renderIcon(text, "normal", size))).map((p) => p.y);
+  const ys = inkOf(text, "normal", size).map((p) => p.y);
   return Math.max(...ys) - Math.min(...ys) + 1;
 }
 
+function inkColors(pixels: Pixel[]): string[] {
+  return [...new Set(pixels.map((p) => p.color.join(",")))];
+}
+
 describe("renderIcon", () => {
-  it.each([16, 32])("renders a %ipx square PNG", (size) => {
-    const image = decodePng(renderIcon("87", "normal", size));
+  it.each([16, 24, 32])("renders a %ipx square PNG", (size) => {
+    const image = decodePng(renderIcon("87%", "normal", size, "dark"));
 
     expect(image.format).toEqual([8, 6]); // 8-bit RGBA
     expect([image.width, image.height]).toEqual([size, size]);
   });
 
-  it("fills the background with the tone colour and leaves the corners clear", () => {
-    const normal = decodePng(renderIcon("87", "normal", 32));
-    const low = decodePng(renderIcon("87", "low", 32));
+  it("leaves everything but the text transparent", () => {
+    const image = decodePng(renderIcon("87%", "normal", 32, "dark"));
 
-    expect(normal.pixel(0, 0)[3]).toBe(0);
-    expect(normal.pixel(1, 16)[3]).toBe(255);
-    expect(low.pixel(1, 16)).not.toEqual(normal.pixel(1, 16));
+    expect(image.pixel(0, 0)[3]).toBe(0);
+    expect(image.pixel(1, 16)[3]).toBe(0);
+    expect(inkColors(ink(image))).toEqual(["255,255,255"]);
   });
 
-  it.each(["7", "87", "100", "z", "-"])("draws %s in white, centred inside the icon", (text) => {
-    const ink = whitePixels(decodePng(renderIcon(text, "normal", 16)));
-    const xs = ink.map((p) => p.x);
-    const ys = ink.map((p) => p.y);
+  it("draws the text in a single colour per tone", () => {
+    const colors = (["normal", "low", "charging", "inactive"] as const).map((tone) =>
+      inkColors(inkOf("87%", tone)),
+    );
 
-    expect(ink.length).toBeGreaterThan(0);
+    for (const tone of colors) expect(tone).toHaveLength(1);
+    expect(new Set(colors.flat()).size).toBe(4);
+  });
+
+  it("uses dark text on a light taskbar", () => {
+    expect(inkColors(inkOf("87%", "normal", 16, "light"))).not.toEqual(
+      inkColors(inkOf("87%", "normal", 16, "dark")),
+    );
+    expect(inkColors(inkOf("87%", "inactive", 16, "light"))).not.toEqual(
+      inkColors(inkOf("87%", "inactive", 16, "dark")),
+    );
+  });
+
+  it.each(["7%", "87%", "100%", "z", "-"])("draws %s centred in the icon", (text) => {
+    const pixels = inkOf(text);
+    const xs = pixels.map((p) => p.x);
+    const ys = pixels.map((p) => p.y);
+
+    expect(pixels.length).toBeGreaterThan(0);
     // The ink's bounding box is centred on the icon's middle (7.5) to within half a pixel.
     expect(Math.min(...xs) + Math.max(...xs)).toBeGreaterThanOrEqual(14);
     expect(Math.min(...xs) + Math.max(...xs)).toBeLessThanOrEqual(16);
@@ -87,11 +117,18 @@ describe("renderIcon", () => {
     expect(Math.min(...ys) + Math.max(...ys)).toBeLessThanOrEqual(16);
   });
 
-  it("keeps three digits as tall as two at 16px", () => {
-    expect(inkHeight("100", 16)).toBe(inkHeight("87", 16));
+  it("draws a percent sign", () => {
+    // A trailing blank keeps the same layout, so the only difference is the % glyph.
+    expect(inkOf("87%").length).toBeGreaterThan(inkOf("87 ").length);
+  });
+
+  it.each([16, 32])("keeps 100%% as tall as 87%% at %ipx", (size) => {
+    expect(inkHeight("100%", size)).toBe(inkHeight("87%", size));
   });
 
   it("renders different text differently", () => {
-    expect(renderIcon("87", "normal", 32).equals(renderIcon("86", "normal", 32))).toBe(false);
+    expect(
+      renderIcon("87%", "normal", 32, "dark").equals(renderIcon("86%", "normal", 32, "dark")),
+    ).toBe(false);
   });
 });

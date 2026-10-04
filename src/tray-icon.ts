@@ -1,17 +1,30 @@
 import { crc32, deflateSync } from "node:zlib";
 import type { Tone } from "./tray-display.js";
 
-const TONE_COLORS: Record<Tone, readonly [number, number, number]> = {
-  normal: [64, 64, 64],
-  low: [217, 119, 6],
-  charging: [22, 163, 74],
-  inactive: [107, 114, 128],
+/** The taskbar's colour scheme, which decides whether neutral text is light or dark. */
+export type Taskbar = "dark" | "light";
+
+type Rgb = readonly [number, number, number];
+
+// Text colours, chosen to read on the given taskbar. There is no background.
+const TONE_COLORS: Record<Taskbar, Record<Tone, Rgb>> = {
+  dark: {
+    normal: [255, 255, 255],
+    low: [251, 191, 36],
+    charging: [74, 222, 128],
+    inactive: [156, 163, 175],
+  },
+  light: {
+    normal: [32, 32, 32],
+    low: [180, 83, 9],
+    charging: [21, 128, 61],
+    inactive: [107, 114, 128],
+  },
 };
 
-const GLYPH_WIDTH = 3;
 const GLYPH_HEIGHT = 5;
 
-// 3×5 pixel font, one string per row.
+// Pixel font, 5 rows high, one string per row. Most glyphs are 3 wide; "%" needs 4.
 const GLYPHS: Record<string, readonly string[]> = {
   "0": ["###", "#.#", "#.#", "#.#", "###"],
   "1": [".#.", "##.", ".#.", ".#.", "###"],
@@ -23,36 +36,29 @@ const GLYPHS: Record<string, readonly string[]> = {
   "7": ["###", "..#", "..#", "..#", "..#"],
   "8": ["###", "#.#", "###", "#.#", "###"],
   "9": ["###", "#.#", "###", "..#", "###"],
+  "%": ["#..#", "...#", "..#.", ".#..", "#..#"],
   "-": ["...", "...", "###", "...", "..."],
   z: ["###", "..#", ".#.", "#..", "###"],
 };
 
-/** Renders a square tray icon showing `text` (digits, "-" or "z") as a PNG. */
-export function renderIcon(text: string, tone: Tone, size: number): Buffer {
+/** Renders a square tray icon showing `text` (digits, "%", "-" or "z") as a PNG. */
+export function renderIcon(text: string, tone: Tone, size: number, taskbar: Taskbar): Buffer {
   const pixels = new Uint8Array(size * size * 4);
-  const [r, g, b] = TONE_COLORS[tone];
-  const radius = Math.max(2, size / 8);
+  const [r, g, b] = TONE_COLORS[taskbar][tone];
 
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      if (insideRoundedSquare(x, y, size, radius)) setPixel(pixels, size, x, y, r, g, b);
-    }
-  }
-
-  const padding = Math.max(1, Math.floor(size / 16));
-  const available = size - 2 * padding;
-  const columns = text.length * (GLYPH_WIDTH + 1) - 1;
-  const fitX = Math.max(1, Math.floor(available / columns));
-  const fitY = Math.max(1, Math.floor(available / GLYPH_HEIGHT));
-  // Glyphs may be up to twice as tall as wide, so three digits stay legible at 16px.
+  const glyphs = [...text].map((char) => GLYPHS[char] ?? ["...", "...", "...", "...", "..."]);
+  // Glyph widths plus a one-column gap between neighbours.
+  const columns = glyphs.reduce((sum, glyph) => sum + (glyph[0]?.length ?? 0) + 1, -1);
+  const fitX = Math.max(1, Math.floor(size / columns));
+  const fitY = Math.max(1, Math.floor(size / GLYPH_HEIGHT));
+  // Glyphs may be up to twice as tall as wide, so "100%" stays legible at 16px.
   const scaleY = Math.min(fitY, 2 * fitX);
   const scaleX = Math.min(fitX, scaleY);
   const left = Math.floor((size - columns * scaleX) / 2);
   const top = Math.floor((size - GLYPH_HEIGHT * scaleY) / 2);
 
-  for (const [index, char] of [...text].entries()) {
-    const glyph = GLYPHS[char] ?? [];
-    const glyphLeft = left + index * (GLYPH_WIDTH + 1) * scaleX;
+  let glyphLeft = left;
+  for (const glyph of glyphs) {
     for (const [row, line] of glyph.entries()) {
       for (const [column, cell] of [...line].entries()) {
         if (cell !== "#") continue;
@@ -60,22 +66,15 @@ export function renderIcon(text: string, tone: Tone, size: number): Buffer {
           for (let dx = 0; dx < scaleX; dx++) {
             const x = glyphLeft + column * scaleX + dx;
             const y = top + row * scaleY + dy;
-            if (x < size && y < size) setPixel(pixels, size, x, y, 255, 255, 255);
+            if (x < size && y < size) setPixel(pixels, size, x, y, r, g, b);
           }
         }
       }
     }
+    glyphLeft += ((glyph[0]?.length ?? 0) + 1) * scaleX;
   }
 
   return encodePng(pixels, size, size);
-}
-
-function insideRoundedSquare(x: number, y: number, size: number, radius: number): boolean {
-  const px = x + 0.5;
-  const py = y + 0.5;
-  const cx = Math.min(Math.max(px, radius), size - radius);
-  const cy = Math.min(Math.max(py, radius), size - radius);
-  return (px - cx) ** 2 + (py - cy) ** 2 <= radius ** 2;
 }
 
 function setPixel(
