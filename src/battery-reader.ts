@@ -43,6 +43,9 @@ export interface PollOptions {
   sleep?: (ms: number) => Promise<void>;
   /** How long a single HID call may take before it counts as failed. */
   timeoutMs?: number;
+  /** How long a whole poll, retries included, may take. */
+  deadlineMs?: number;
+  now?: () => number;
 }
 
 const RETRIES = 3;
@@ -50,21 +53,31 @@ const RETRY_DELAY_MS = 500;
 /** Time the mouse (or the dongle relaying to it) needs between a request and its response. */
 const RESPONSE_DELAY_MS = 50;
 const HID_TIMEOUT_MS = 2_000;
+// Keeps Refresh now responsive even when every interface is stuck.
+const POLL_DEADLINE_MS = 10_000;
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export async function pollBattery(
   transport: HidTransport,
-  { sleep = defaultSleep, timeoutMs = HID_TIMEOUT_MS }: PollOptions = {},
+  {
+    sleep = defaultSleep,
+    timeoutMs = HID_TIMEOUT_MS,
+    deadlineMs = POLL_DEADLINE_MS,
+    now = Date.now,
+  }: PollOptions = {},
 ): Promise<PollResult> {
+  const deadline = now() + deadlineMs;
+  const remaining = () => Math.max(0, deadline - now());
   // A stuck mouse or dongle (or another app holding it) must not stall polling forever.
-  transport = withTimeouts(transport, timeoutMs);
+  transport = withTimeouts(transport, () => Math.min(timeoutMs, remaining()));
 
   let lastReason = "";
   let mouseAsleep = false;
   let wired = false;
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt > 0) await sleep(RETRY_DELAY_MS);
+    if (remaining() === 0) return { kind: "unavailable", reason: "poll timed out" };
 
     // List again on every attempt: the dongle may show up late, e.g. right after resume.
     let interfaces: HidDeviceInfo[];
@@ -86,6 +99,7 @@ export async function pollBattery(
     if (candidates.some((c) => c.productId === WIRED_PRODUCT_ID)) wired = true;
 
     for (const candidate of candidates) {
+      if (remaining() === 0) return { kind: "unavailable", reason: "poll timed out" };
       try {
         return { kind: "reading", reading: await readFrom(transport, candidate, sleep) };
       } catch (error) {
@@ -132,21 +146,21 @@ async function query(
   return parsed.value;
 }
 
-function withTimeouts(transport: HidTransport, ms: number): HidTransport {
+function withTimeouts(transport: HidTransport, ms: () => number): HidTransport {
   return {
-    list: () => timeout(transport.list(), ms),
+    list: () => timeout(transport.list(), ms()),
     open: async (path) => {
       const opening = transport.open(path);
-      const handle = await timeout(opening, ms).catch((error: unknown) => {
+      const handle = await timeout(opening, ms()).catch((error: unknown) => {
         // If it opens after all, close it so the interface is not left held.
         void opening.then((late) => late.close()).catch(() => {});
         throw error;
       });
       return {
-        sendFeatureReport: (data) => timeout(handle.sendFeatureReport(data), ms),
+        sendFeatureReport: (data) => timeout(handle.sendFeatureReport(data), ms()),
         getFeatureReport: (reportId, length) =>
-          timeout(handle.getFeatureReport(reportId, length), ms),
-        close: () => timeout(handle.close(), ms),
+          timeout(handle.getFeatureReport(reportId, length), ms()),
+        close: () => timeout(handle.close(), ms()),
       };
     },
   };

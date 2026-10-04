@@ -260,6 +260,30 @@ describe("pollBattery", () => {
     expect(await pollBattery(transport, options)).toMatchObject({ kind: "reading" });
   });
 
+  it("stops trying once the poll runs past its deadline", async () => {
+    let clock = 0;
+    const transport = fakeTransport(
+      ["a", "b", "c"].map((path) => ({
+        productId: DONGLE_PRODUCT_ID,
+        path,
+        respond: () => {
+          clock += 2_000; // each failed request takes a full timeout
+          return "error" as const;
+        },
+      })),
+    );
+
+    const result = await pollBattery(transport, {
+      ...options,
+      now: () => clock,
+      deadlineMs: 10_000,
+    });
+
+    expect(result).toEqual({ kind: "unavailable", reason: "poll timed out" });
+    // 5 failed requests reach the deadline, well short of 4 attempts × 3 interfaces.
+    expect(transport.opened).toHaveLength(5);
+  });
+
   it("reports unavailable when listing devices fails", async () => {
     const transport: HidTransport = {
       list: async () => {
