@@ -49,6 +49,8 @@ const awake =
 
 const options = { sleep: async () => {} };
 
+const hang = () => new Promise<never>(() => {});
+
 describe("pollBattery", () => {
   it("reads the percentage and charging flag through the dongle", async () => {
     const transport = fakeTransport([
@@ -172,6 +174,36 @@ describe("pollBattery", () => {
     expect(await pollBattery(transport, options)).toEqual({
       kind: "unavailable",
       reason: "read failed",
+    });
+  });
+
+  it("gives up on a HID call that never returns", async () => {
+    const transport: HidTransport = {
+      list: async () => [{ productId: WIRED_PRODUCT_ID, path: "wired" }],
+      open: async () => ({
+        sendFeatureReport: async () => {},
+        getFeatureReport: hang,
+        close: async () => {},
+      }),
+    };
+
+    expect(await pollBattery(transport, { ...options, timeoutMs: 5 })).toEqual({
+      kind: "unavailable",
+      reason: "HID request timed out",
+    });
+  });
+
+  it("gives up when listing devices never returns", async () => {
+    const transport: HidTransport = {
+      list: hang,
+      open: async () => {
+        throw new Error("unreachable");
+      },
+    };
+
+    expect(await pollBattery(transport, { ...options, timeoutMs: 5 })).toEqual({
+      kind: "unavailable",
+      reason: "HID request timed out",
     });
   });
 

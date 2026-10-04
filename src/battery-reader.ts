@@ -41,19 +41,24 @@ export interface HidTransport {
 
 export interface PollOptions {
   sleep?: (ms: number) => Promise<void>;
+  /** How long a single HID call may take before it counts as failed. */
+  timeoutMs?: number;
 }
 
 const RETRIES = 3;
 const RETRY_DELAY_MS = 500;
 /** Time the mouse (or the dongle relaying to it) needs between a request and its response. */
 const RESPONSE_DELAY_MS = 50;
+const HID_TIMEOUT_MS = 2_000;
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export async function pollBattery(
   transport: HidTransport,
-  { sleep = defaultSleep }: PollOptions = {},
+  { sleep = defaultSleep, timeoutMs = HID_TIMEOUT_MS }: PollOptions = {},
 ): Promise<PollResult> {
+  // A stuck device (or another app holding it) must not stall polling forever.
+  transport = withTimeouts(transport, timeoutMs);
   let devices: HidDeviceInfo[];
   try {
     devices = await transport.list();
@@ -120,6 +125,29 @@ async function query(
   if (!parsed.ok)
     throw parsed.mouseDidNotAnswer ? new MouseAsleepError(parsed.reason) : new Error(parsed.reason);
   return parsed.value;
+}
+
+function withTimeouts(transport: HidTransport, ms: number): HidTransport {
+  return {
+    list: () => timeout(transport.list(), ms),
+    open: async (path) => {
+      const handle = await timeout(transport.open(path), ms);
+      return {
+        sendFeatureReport: (data) => timeout(handle.sendFeatureReport(data), ms),
+        getFeatureReport: (reportId, length) =>
+          timeout(handle.getFeatureReport(reportId, length), ms),
+        close: () => timeout(handle.close(), ms),
+      };
+    },
+  };
+}
+
+function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("HID request timed out")), ms);
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
 }
 
 /** The mouse did not answer the request, or answered 0% through the dongle while not charging. */
