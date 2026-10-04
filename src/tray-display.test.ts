@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { describeLowBattery, describePoll } from "./tray-display.js";
+import { describeLowBattery, describePollResult } from "./tray-display.js";
 
-describe("describePoll", () => {
+describe("describePollResult", () => {
   it("shows the percentage", () => {
-    expect(describePoll({ kind: "reading", reading: { percent: 87, charging: false } })).toEqual({
+    expect(
+      describePollResult({ kind: "reading", reading: { percent: 87, charging: false } }),
+    ).toEqual({
       tooltip: "DeathAdder V3 Pro — 87%",
       iconText: "87",
       tone: "normal",
@@ -11,7 +13,9 @@ describe("describePoll", () => {
   });
 
   it("marks charging", () => {
-    expect(describePoll({ kind: "reading", reading: { percent: 15, charging: true } })).toEqual({
+    expect(
+      describePollResult({ kind: "reading", reading: { percent: 15, charging: true } }),
+    ).toEqual({
       tooltip: "DeathAdder V3 Pro — 15% (charging)",
       iconText: "15",
       tone: "charging",
@@ -24,13 +28,13 @@ describe("describePoll", () => {
     [11, "low"],
     [10, "critical"],
   ] as const)("uses the %i%% tone %s", (percent, tone) => {
-    expect(describePoll({ kind: "reading", reading: { percent, charging: false } }).tone).toBe(
-      tone,
-    );
+    expect(
+      describePollResult({ kind: "reading", reading: { percent, charging: false } }).tone,
+    ).toBe(tone);
   });
 
   it("shows asleep", () => {
-    expect(describePoll({ kind: "asleep" })).toEqual({
+    expect(describePollResult({ kind: "asleep" })).toEqual({
       tooltip: "DeathAdder V3 Pro — Asleep",
       iconText: "z",
       tone: "inactive",
@@ -38,7 +42,7 @@ describe("describePoll", () => {
   });
 
   it("shows unavailable without the reason", () => {
-    expect(describePoll({ kind: "unavailable", reason: "mouse not found" })).toEqual({
+    expect(describePollResult({ kind: "unavailable", reason: "mouse not found" })).toEqual({
       tooltip: "DeathAdder V3 Pro — Unavailable",
       iconText: "-",
       tone: "inactive",

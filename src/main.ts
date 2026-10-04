@@ -4,7 +4,7 @@ import { pollBattery } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
 import { LowBatteryAlerts } from "./low-battery-alerts.js";
 import { nodeHidTransport } from "./node-hid-transport.js";
-import { MOUSE_NAME, describeLowBattery, describePoll } from "./tray-display.js";
+import { MOUSE_NAME, describeLowBattery, describePollResult } from "./tray-display.js";
 import type { TrayDisplay } from "./tray-display.js";
 import { renderIcon } from "./tray-icon.js";
 
@@ -42,10 +42,10 @@ async function refresh(): Promise<void> {
   if (refreshing) return;
   refreshing = true;
   try {
-    const poll = await pollBattery(nodeHidTransport);
-    if (poll.kind === "unavailable") console.warn(`Battery unavailable: ${poll.reason}`);
-    show(describePoll(poll));
-    if (poll.kind === "reading") notifyIfLow(poll.reading);
+    const result = await pollBattery(nodeHidTransport);
+    if (result.kind === "unavailable") console.warn(`Battery unavailable: ${result.reason}`);
+    show(describePollResult(result));
+    if (result.kind === "reading") notifyIfLow(result.reading);
   } finally {
     refreshing = false;
   }

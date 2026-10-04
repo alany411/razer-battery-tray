@@ -16,7 +16,7 @@ export interface BatteryReading {
   charging: boolean;
 }
 
-export type Poll =
+export type PollResult =
   | { kind: "reading"; reading: BatteryReading }
   | { kind: "asleep" }
   | { kind: "unavailable"; reason: string };
@@ -53,7 +53,7 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
 export async function pollBattery(
   transport: HidTransport,
   { sleep = defaultSleep }: PollOptions = {},
-): Promise<Poll> {
+): Promise<PollResult> {
   let devices: HidDeviceInfo[];
   try {
     devices = await transport.list();
@@ -71,7 +71,7 @@ export async function pollBattery(
   }
 
   let lastReason = "";
-  let mouseDidNotAnswer = false;
+  let mouseAsleep = false;
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt > 0) await sleep(RETRY_DELAY_MS);
     for (const device of candidates) {
@@ -79,15 +79,13 @@ export async function pollBattery(
         return { kind: "reading", reading: await readFrom(transport, device, sleep) };
       } catch (error) {
         lastReason = errorMessage(error);
-        if (error instanceof NoAnswerError) mouseDidNotAnswer = true;
+        if (error instanceof MouseAsleepError) mouseAsleep = true;
       }
     }
   }
 
   const wired = candidates.some((d) => d.productId === WIRED_PRODUCT_ID);
-  return !wired && mouseDidNotAnswer
-    ? { kind: "asleep" }
-    : { kind: "unavailable", reason: lastReason };
+  return !wired && mouseAsleep ? { kind: "asleep" } : { kind: "unavailable", reason: lastReason };
 }
 
 async function readFrom(
@@ -101,7 +99,7 @@ async function readFrom(
     const charging = await query(handle, CHARGING_STATUS, sleep);
     // A mouse that is truly empty is off, so a 0% reading through the dongle means it is asleep.
     if (device.productId === DONGLE_PRODUCT_ID && level === 0 && charging !== 1) {
-      throw new NoAnswerError("mouse reported 0%");
+      throw new MouseAsleepError("mouse reported 0%");
     }
     return { percent: Math.round((level / 255) * 100), charging: charging === 1 };
   } finally {
@@ -120,12 +118,12 @@ async function query(
   await sleep(RESPONSE_DELAY_MS);
   const parsed = parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));
   if (!parsed.ok)
-    throw parsed.mouseDidNotAnswer ? new NoAnswerError(parsed.reason) : new Error(parsed.reason);
+    throw parsed.mouseDidNotAnswer ? new MouseAsleepError(parsed.reason) : new Error(parsed.reason);
   return parsed.value;
 }
 
-/** The dongle replied, but the mouse did not answer the request. */
-class NoAnswerError extends Error {}
+/** The mouse did not answer the request, or answered 0% through the dongle. */
+class MouseAsleepError extends Error {}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
