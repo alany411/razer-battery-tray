@@ -95,12 +95,14 @@ async function poll(
   const remaining = () => Math.max(0, deadline - now());
   // A stuck mouse or dongle (or another app holding it) must not stall polling forever.
   transport = withTimeouts(transport, () => Math.min(timeoutMs, remaining()));
+  // Waits count against the deadline too.
+  const wait = (ms: number) => sleep(Math.min(ms, remaining()));
 
   let lastReason = "";
   let mouseAsleep = false;
   let wired = false;
   attempts: for (let attempt = 0; attempt <= RETRIES; attempt++) {
-    if (attempt > 0) await sleep(RETRY_DELAY_MS);
+    if (attempt > 0) await wait(RETRY_DELAY_MS);
     if (remaining() === 0) {
       lastReason = "poll timed out";
       break;
@@ -136,7 +138,7 @@ async function poll(
         break attempts;
       }
       try {
-        const reading = await readFrom(transport, candidate, sleep);
+        const reading = await readFrom(transport, candidate, wait);
         memory.lastPath = candidate.path;
         return { kind: "reading", reading };
       } catch (error) {
