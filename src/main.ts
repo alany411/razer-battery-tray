@@ -7,6 +7,7 @@ import { LowBatteryAlerts } from "./low-battery-alerts.js";
 import { nodeHidTransport } from "./node-hid-transport.js";
 import { MOUSE_NAME, describeLowBattery, describePollResult } from "./tray-display.js";
 import type { TrayDisplay } from "./tray-display.js";
+import { rerunQueue } from "./rerun-queue.js";
 import { renderIcon } from "./tray-icon.js";
 
 const POLL_INTERVAL_MS = 60_000;
@@ -20,7 +21,6 @@ let display: TrayDisplay = {
   iconText: "-",
   tone: "inactive",
 };
-let polling = false;
 
 if (app.requestSingleInstanceLock()) {
   app.setAppUserModelId(APP_ID);
@@ -39,18 +39,13 @@ function start(): void {
   setInterval(() => void poll(), POLL_INTERVAL_MS);
 }
 
-async function poll(): Promise<void> {
-  if (polling) return;
-  polling = true;
-  try {
-    const result = await pollBattery(nodeHidTransport);
-    if (result.kind === "unavailable") console.warn(`Battery unavailable: ${result.reason}`);
-    show(describePollResult(result));
-    if (result.kind === "reading") notifyIfLow(result.reading);
-  } finally {
-    polling = false;
-  }
-}
+// Refresh now during a poll queues another poll instead of being dropped.
+const poll = rerunQueue(async () => {
+  const result = await pollBattery(nodeHidTransport);
+  if (result.kind === "unavailable") console.warn(`Battery unavailable: ${result.reason}`);
+  show(describePollResult(result));
+  if (result.kind === "reading") notifyIfLow(result.reading);
+});
 
 function show(next: TrayDisplay): void {
   display = next;
