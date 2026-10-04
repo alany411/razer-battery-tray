@@ -35,23 +35,19 @@ export interface HidTransport {
 }
 
 export interface ReadOptions {
-  attempts?: number;
-  retryDelayMs?: number;
-  /** Time the mouse (or the dongle relaying to it) needs between a request and its response. */
-  responseDelayMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }
+
+const RETRIES = 3;
+const RETRY_DELAY_MS = 500;
+/** Time the mouse (or the dongle relaying to it) needs between a request and its response. */
+const RESPONSE_DELAY_MS = 50;
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export async function readBattery(
   transport: HidTransport,
-  {
-    attempts = 3,
-    retryDelayMs = 500,
-    responseDelayMs = 50,
-    sleep = defaultSleep,
-  }: ReadOptions = {},
+  { sleep = defaultSleep }: ReadOptions = {},
 ): Promise<BatteryReading> {
   let devices: HidDeviceInfo[];
   try {
@@ -71,11 +67,11 @@ export async function readBattery(
 
   let lastReason = "";
   let mouseDidNotAnswer = false;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    if (attempt > 0) await sleep(retryDelayMs);
+  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+    if (attempt > 0) await sleep(RETRY_DELAY_MS);
     for (const device of candidates) {
       try {
-        return await readFrom(transport, device.path, responseDelayMs, sleep);
+        return await readFrom(transport, device.path, sleep);
       } catch (error) {
         lastReason = errorMessage(error);
         if (error instanceof NoAnswerError) mouseDidNotAnswer = true;
@@ -92,13 +88,12 @@ export async function readBattery(
 async function readFrom(
   transport: HidTransport,
   path: string,
-  responseDelayMs: number,
   sleep: (ms: number) => Promise<void>,
 ): Promise<BatteryReading> {
   const handle = await transport.open(path);
   try {
-    const level = await query(handle, BATTERY_LEVEL, responseDelayMs, sleep);
-    const charging = await query(handle, CHARGING_STATUS, responseDelayMs, sleep);
+    const level = await query(handle, BATTERY_LEVEL, sleep);
+    const charging = await query(handle, CHARGING_STATUS, sleep);
     return { kind: "ok", percent: Math.round((level / 255) * 100), charging: charging === 1 };
   } finally {
     await handle.close().catch(() => {});
@@ -108,13 +103,12 @@ async function readFrom(
 async function query(
   handle: HidHandle,
   command: Command,
-  responseDelayMs: number,
   sleep: (ms: number) => Promise<void>,
 ): Promise<number> {
   const report = new Uint8Array(REPORT_LENGTH + 1);
   report.set(buildRequest(command), 1);
   await handle.sendFeatureReport(report);
-  await sleep(responseDelayMs);
+  await sleep(RESPONSE_DELAY_MS);
   const parsed = parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));
   if (!parsed.ok)
     throw parsed.replied ? new NoAnswerError(parsed.reason) : new Error(parsed.reason);

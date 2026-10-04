@@ -118,7 +118,8 @@ describe("readBattery", () => {
     ]);
 
     expect(await readBattery(transport, options)).toEqual({ kind: "asleep" });
-    expect(transport.opened).toHaveLength(3);
+    // The first attempt plus 3 retries.
+    expect(transport.opened).toHaveLength(4);
   });
 
   it("reports unavailable when the dongle cannot be opened", async () => {
