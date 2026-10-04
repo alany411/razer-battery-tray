@@ -63,7 +63,8 @@ function show(display: TrayDisplay): void {
       {
         label: "Start with Windows",
         type: "checkbox",
-        checked: app.getLoginItemSettings().openAtLogin,
+        // Unlike openAtLogin, this is false when the app is disabled in Startup Apps.
+        checked: app.getLoginItemSettings().executableWillLaunchAtLogin,
         click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
       },
       { type: "separator" },
