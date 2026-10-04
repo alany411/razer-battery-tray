@@ -5,11 +5,11 @@ A Windows tray app that shows the battery percentage of a Razer DeathAdder V3 Pr
 ## Language
 
 **Mouse**:
-The Razer DeathAdder V3 Pro itself, reached either wired (PID `0x00B6`) or through the dongle.
+The Razer DeathAdder V3 Pro itself, reached either wired (PID `0x00B6`, or `0x00C2` for the model sold with the HyperPolling dongle) or through the dongle.
 _Avoid_: Device (ambiguous with the dongle)
 
 **Dongle**:
-The Razer HyperSpeed wireless receiver (PID `0x00B7`) that relays reports to the mouse.
+The Razer wireless receiver that relays reports to the mouse: HyperSpeed (PID `0x00B7`) or HyperPolling (PID `0x00C3`).
 _Avoid_: Receiver, transceiver
 
 **Poll**:
