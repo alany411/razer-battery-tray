@@ -311,6 +311,22 @@ describe("pollBattery", () => {
     expect(result).toEqual({ kind: "asleep" });
   });
 
+  it("does not report asleep once the dongle disappears mid-poll", async () => {
+    let lists = 0;
+    const dongle = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: () => ({ status: 0x04 }) },
+    ]);
+    const transport: HidTransport = {
+      list: async () => (lists++ === 0 ? dongle.list() : []),
+      open: dongle.open,
+    };
+
+    expect(await pollBattery(transport, options)).toEqual({
+      kind: "unavailable",
+      reason: "mouse not found",
+    });
+  });
+
   it("reports unavailable when listing devices fails", async () => {
     const transport: HidTransport = {
       list: async () => {

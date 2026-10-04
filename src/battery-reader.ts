@@ -97,9 +97,12 @@ export async function pollBattery(
     ];
     if (candidates.length === 0) {
       lastReason = "mouse not found";
+      mouseAsleep = false;
       continue;
     }
     if (candidates.some((c) => c.productId === WIRED_PRODUCT_ID)) wired = true;
+    // Asleep needs the dongle to be present now, not just on an earlier attempt.
+    if (!candidates.some((c) => c.productId === DONGLE_PRODUCT_ID)) mouseAsleep = false;
 
     for (const candidate of candidates) {
       if (remaining() === 0) {
