@@ -8,6 +8,7 @@ import { nodeHidTransport } from "./node-hid-transport.js";
 import { MOUSE_NAME, describeLowBattery, describePollResult } from "./tray-display.js";
 import type { TrayDisplay } from "./tray-display.js";
 import { rerunQueue } from "./rerun-queue.js";
+import { readStartsAtLogin } from "./startup-entry.js";
 import { renderIcon } from "./tray-icon.js";
 
 const POLL_INTERVAL_MS = 60_000;
@@ -34,7 +35,11 @@ function start(): void {
   tray = new Tray(trayIcon(display));
   tray.setToolTip(display.tooltip);
   // Build the menu as it opens, so the Start with Windows checkbox is never stale.
-  tray.on("right-click", () => tray?.popUpContextMenu(menu()));
+  tray.on("right-click", () => {
+    void readStartsAtLogin(APP_ID).then((startsAtLogin) =>
+      tray?.popUpContextMenu(menu(startsAtLogin)),
+    );
+  });
 
   void poll();
   setInterval(() => void poll(), POLL_INTERVAL_MS);
@@ -54,7 +59,7 @@ function show(next: TrayDisplay): void {
   tray?.setToolTip(display.tooltip);
 }
 
-function menu(): Menu {
+function menu(startsAtLogin: boolean): Menu {
   return Menu.buildFromTemplate([
     { label: display.tooltip, enabled: false },
     ...(display.detail ? [{ label: display.detail, enabled: false }] : []),
@@ -63,8 +68,7 @@ function menu(): Menu {
     {
       label: "Start with Windows",
       type: "checkbox",
-      // Unlike openAtLogin, this is false when the app is disabled in Startup Apps.
-      checked: app.getLoginItemSettings().executableWillLaunchAtLogin,
+      checked: startsAtLogin,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
     },
     { type: "separator" },
