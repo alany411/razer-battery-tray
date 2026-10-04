@@ -1,4 +1,4 @@
-import type { Poll } from "./battery-reader.js";
+import type { BatteryReading, Poll } from "./battery-reader.js";
 import { ALERT_THRESHOLDS } from "./low-battery-alerts.js";
 
 export const MOUSE_NAME = "DeathAdder V3 Pro";
@@ -35,4 +35,16 @@ export function describePoll(poll: Poll): TrayDisplay {
       // Windows cuts tray tooltips off at 127 characters, so the reason is only logged.
       return { tooltip: `${MOUSE_NAME} — Unavailable`, iconText: "-", tone: "inactive" };
   }
+}
+
+export function describeLowBattery(
+  threshold: number,
+  reading: BatteryReading,
+): { title: string; body: string } {
+  return {
+    title: `Mouse battery at or below ${threshold}%`,
+    body: reading.charging
+      ? `${MOUSE_NAME} is at ${reading.percent}% and charging.`
+      : `${MOUSE_NAME} is at ${reading.percent}%. Charge it soon.`,
+  };
 }

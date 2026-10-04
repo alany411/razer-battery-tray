@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describePoll } from "./tray-display.js";
+import { describeLowBattery, describePoll } from "./tray-display.js";
 
 describe("describePoll", () => {
   it("shows the percentage", () => {
@@ -42,6 +42,22 @@ describe("describePoll", () => {
       tooltip: "DeathAdder V3 Pro — Unavailable",
       iconText: "-",
       tone: "inactive",
+    });
+  });
+});
+
+describe("describeLowBattery", () => {
+  it("asks to charge the mouse", () => {
+    expect(describeLowBattery(20, { percent: 18, charging: false })).toEqual({
+      title: "Mouse battery at or below 20%",
+      body: "DeathAdder V3 Pro is at 18%. Charge it soon.",
+    });
+  });
+
+  it("does not ask to charge a mouse that is already charging", () => {
+    expect(describeLowBattery(10, { percent: 9, charging: true })).toEqual({
+      title: "Mouse battery at or below 10%",
+      body: "DeathAdder V3 Pro is at 9% and charging.",
     });
   });
 });

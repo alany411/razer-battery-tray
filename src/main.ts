@@ -4,7 +4,7 @@ import { pollBattery } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
 import { LowBatteryAlerts } from "./low-battery-alerts.js";
 import { nodeHidTransport } from "./node-hid-transport.js";
-import { MOUSE_NAME, describePoll } from "./tray-display.js";
+import { MOUSE_NAME, describeLowBattery, describePoll } from "./tray-display.js";
 import type { TrayDisplay } from "./tray-display.js";
 import { renderIcon } from "./tray-icon.js";
 
@@ -85,9 +85,6 @@ function notifyIfLow(reading: BatteryReading): void {
   const thresholds = alerts.update(reading);
   if (!Notification.isSupported()) return;
   for (const threshold of thresholds) {
-    new Notification({
-      title: `Mouse battery at or below ${threshold}%`,
-      body: `${MOUSE_NAME} is at ${reading.percent}%. Charge it soon.`,
-    }).show();
+    new Notification(describeLowBattery(threshold, reading)).show();
   }
 }
