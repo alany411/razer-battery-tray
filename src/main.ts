@@ -1,4 +1,4 @@
-import { Menu, Notification, Tray, app, nativeImage } from "electron";
+import { Menu, Notification, Tray, app, nativeImage, nativeTheme } from "electron";
 import type { NativeImage } from "electron";
 import { APP_ID } from "./app-id.js";
 import { createBatteryPoller } from "./battery-reader.js";
@@ -9,7 +9,9 @@ import { MOUSE_NAME, describeLowBattery, describePollResult } from "./tray-displ
 import type { TrayDisplay } from "./tray-display.js";
 import { rerunQueue } from "./rerun-queue.js";
 import { readStartsAtLogin } from "./startup-entry.js";
+import { readTaskbar } from "./taskbar-theme.js";
 import { renderIcon } from "./tray-icon.js";
+import type { Taskbar } from "./tray-icon.js";
 
 const POLL_INTERVAL_MS = 60_000;
 // Icon sizes for 100%, 150% and 200% display scaling.
@@ -18,6 +20,7 @@ const ICON_SCALES = [1, 1.5, 2] as const;
 const alerts = new LowBatteryAlerts();
 const pollBattery = createBatteryPoller(nodeHidTransport);
 let tray: Tray | undefined;
+let taskbar: Taskbar = "dark";
 let display: TrayDisplay = {
   tooltip: `${MOUSE_NAME} — Reading battery…`,
   iconText: "-",
@@ -41,13 +44,26 @@ function start(): void {
     );
   });
 
+  // Redraw in the taskbar's colours when Windows switches between light and dark.
+  nativeTheme.on("updated", () => void followTaskbar());
+  void followTaskbar();
+
   void poll();
   setInterval(() => void poll(), POLL_INTERVAL_MS);
+}
+
+async function followTaskbar(): Promise<void> {
+  const next = await readTaskbar();
+  if (next === taskbar) return;
+  taskbar = next;
+  show(display);
 }
 
 // Refresh now during a poll queues another poll instead of being dropped.
 const poll = rerunQueue(async () => {
   const result = await pollBattery();
+  // Also catches theme changes Electron does not report.
+  taskbar = await readTaskbar();
   if (result.kind === "unavailable") console.warn(`Battery unavailable: ${result.reason}`);
   show(describePollResult(result));
   if (result.kind === "reading") notifyIfLow(result.reading);
@@ -81,7 +97,7 @@ function trayIcon({ iconText, tone }: TrayDisplay): NativeImage {
   for (const scaleFactor of ICON_SCALES) {
     image.addRepresentation({
       scaleFactor,
-      buffer: renderIcon(iconText, tone, 16 * scaleFactor, "dark"),
+      buffer: renderIcon(iconText, tone, 16 * scaleFactor, taskbar),
     });
   }
   return image;
