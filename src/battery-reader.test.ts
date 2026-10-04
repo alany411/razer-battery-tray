@@ -121,6 +121,40 @@ describe("readBattery", () => {
     expect(transport.opened).toHaveLength(3);
   });
 
+  it("reports unavailable when the dongle cannot be opened", async () => {
+    const transport: HidTransport = {
+      list: async () => [{ productId: DONGLE_PRODUCT_ID, path: "dongle" }],
+      open: async () => {
+        throw new Error("access denied");
+      },
+    };
+
+    expect(await readBattery(transport, options)).toEqual({
+      kind: "unavailable",
+      reason: "access denied",
+    });
+  });
+
+  it("reports unavailable when the dongle's reads fail", async () => {
+    const transport = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: () => "error" },
+    ]);
+
+    expect(await readBattery(transport, options)).toEqual({
+      kind: "unavailable",
+      reason: "read failed",
+    });
+  });
+
+  it("reports asleep when one dongle interface fails and another gets no answer", async () => {
+    const transport = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "wrong-interface", respond: () => "error" },
+      { productId: DONGLE_PRODUCT_ID, path: "control", respond: () => ({ status: 0x04 }) },
+    ]);
+
+    expect(await readBattery(transport, options)).toEqual({ kind: "asleep" });
+  });
+
   it("reports unavailable when the cable is connected but every attempt fails", async () => {
     const transport = fakeTransport([
       { productId: WIRED_PRODUCT_ID, path: "wired", respond: () => "error" },

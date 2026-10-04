@@ -53,12 +53,13 @@ describe("parseResponse", () => {
     expect(parseResponse(BATTERY_LEVEL, withReportId)).toEqual({ ok: true, value: 77 });
   });
 
-  it("reports the status when the device did not succeed", () => {
+  it("reports the status when the mouse did not answer", () => {
     const request = buildRequest(BATTERY_LEVEL);
 
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, 0x04, 0))).toEqual({
       ok: false,
       reason: "status 0x04",
+      replied: true,
     });
   });
 
@@ -68,6 +69,7 @@ describe("parseResponse", () => {
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, 0x02, 1))).toEqual({
       ok: false,
       reason: "mismatched command",
+      replied: false,
     });
   });
 
@@ -75,6 +77,7 @@ describe("parseResponse", () => {
     expect(parseResponse(BATTERY_LEVEL, new Uint8Array(10))).toEqual({
       ok: false,
       reason: "unexpected length 10",
+      replied: false,
     });
   });
 });

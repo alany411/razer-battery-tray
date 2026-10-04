@@ -30,7 +30,13 @@ export const BATTERY_LEVEL: Command = { commandClass: 0x07, commandId: 0x80, dat
 /** Charging flag, 0 or 1. */
 export const CHARGING_STATUS: Command = { commandClass: 0x07, commandId: 0x84, dataSize: 0x02 };
 
-export type ParsedResponse = { ok: true; value: number } | { ok: false; reason: string };
+/**
+ * `replied` is true when a well-formed response came back with a non-success status: the
+ * dongle answered for the mouse, but the mouse did not answer.
+ */
+export type ParsedResponse =
+  | { ok: true; value: number }
+  | { ok: false; reason: string; replied: boolean };
 
 export function buildRequest(command: Command): Uint8Array {
   const report = new Uint8Array(REPORT_LENGTH);
@@ -46,14 +52,18 @@ export function parseResponse(command: Command, response: Uint8Array): ParsedRes
   // On Windows the report ID (0) comes back as the first byte.
   const report = response.length === REPORT_LENGTH + 1 ? response.subarray(1) : response;
   if (report.length !== REPORT_LENGTH) {
-    return { ok: false, reason: `unexpected length ${response.length}` };
+    return { ok: false, reason: `unexpected length ${response.length}`, replied: false };
   }
   if (report[6] !== command.commandClass || report[7] !== command.commandId) {
-    return { ok: false, reason: "mismatched command" };
+    return { ok: false, reason: "mismatched command", replied: false };
   }
   const status = report[0] ?? 0;
   if (status !== STATUS_SUCCESS) {
-    return { ok: false, reason: `status 0x${status.toString(16).padStart(2, "0")}` };
+    return {
+      ok: false,
+      reason: `status 0x${status.toString(16).padStart(2, "0")}`,
+      replied: true,
+    };
   }
   return { ok: true, value: report[VALUE_OFFSET] ?? 0 };
 }

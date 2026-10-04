@@ -37,7 +37,7 @@ export interface HidTransport {
 export interface ReadOptions {
   attempts?: number;
   retryDelayMs?: number;
-  /** Time the device needs between a request and its response. */
+  /** Time the mouse (or the dongle relaying to it) needs between a request and its response. */
   responseDelayMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -70,6 +70,7 @@ export async function readBattery(
   }
 
   let lastReason = "";
+  let mouseDidNotAnswer = false;
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) await sleep(retryDelayMs);
     for (const device of candidates) {
@@ -77,12 +78,15 @@ export async function readBattery(
         return await readFrom(transport, device.path, responseDelayMs, sleep);
       } catch (error) {
         lastReason = errorMessage(error);
+        if (error instanceof NoAnswerError) mouseDidNotAnswer = true;
       }
     }
   }
 
   const wired = candidates.some((d) => d.productId === WIRED_PRODUCT_ID);
-  return wired ? { kind: "unavailable", reason: lastReason } : { kind: "asleep" };
+  return !wired && mouseDidNotAnswer
+    ? { kind: "asleep" }
+    : { kind: "unavailable", reason: lastReason };
 }
 
 async function readFrom(
@@ -112,9 +116,13 @@ async function query(
   await handle.sendFeatureReport(report);
   await sleep(responseDelayMs);
   const parsed = parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));
-  if (!parsed.ok) throw new Error(parsed.reason);
+  if (!parsed.ok)
+    throw parsed.replied ? new NoAnswerError(parsed.reason) : new Error(parsed.reason);
   return parsed.value;
 }
+
+/** The dongle replied, but the mouse did not answer the request. */
+class NoAnswerError extends Error {}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
