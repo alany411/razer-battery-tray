@@ -21,7 +21,7 @@ export function describePollResult(result: PollResult): TrayDisplay {
       const { reading } = result;
       return {
         tooltip: `${MOUSE_NAME} — ${reading.percent}%${reading.charging ? " (charging)" : ""}`,
-        iconText: `${reading.percent}%`,
+        iconText: String(reading.percent),
         tone: reading.charging ? "charging" : reading.percent <= LOW ? "low" : "normal",
       };
     }

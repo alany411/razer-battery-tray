@@ -22,9 +22,12 @@ const TONE_COLORS: Record<Taskbar, Record<Tone, Rgb>> = {
   },
 };
 
+const GLYPH_WIDTH = 3;
 const GLYPH_HEIGHT = 5;
+// The widest text the icon shows: "100".
+const MAX_GLYPHS = 3;
 
-// Pixel font, 5 rows high, one string per row. Most glyphs are 3 wide; "%" needs 4.
+// 3×5 pixel font, one string per row.
 const GLYPHS: Record<string, readonly string[]> = {
   "0": ["###", "#.#", "#.#", "#.#", "###"],
   "1": [".#.", "##.", ".#.", ".#.", "###"],
@@ -36,29 +39,40 @@ const GLYPHS: Record<string, readonly string[]> = {
   "7": ["###", "..#", "..#", "..#", "..#"],
   "8": ["###", "#.#", "###", "#.#", "###"],
   "9": ["###", "#.#", "###", "..#", "###"],
-  "%": ["#..#", "...#", "..#.", ".#..", "#..#"],
   "-": ["...", "...", "###", "...", "..."],
   z: ["###", "..#", ".#.", "#..", "###"],
 };
 
-/** Renders a square tray icon showing `text` (digits, "%", "-" or "z") as a PNG. */
+/** Width in font columns of `glyphs` glyphs with a one-column gap between them. */
+function columnsFor(glyphs: number): number {
+  return glyphs * (GLYPH_WIDTH + 1) - 1;
+}
+
+/** Renders a square tray icon showing `text` (digits, "-" or "z") as a PNG. */
 export function renderIcon(text: string, tone: Tone, size: number, taskbar: Taskbar): Buffer {
   const pixels = new Uint8Array(size * size * 4);
   const [r, g, b] = TONE_COLORS[taskbar][tone];
 
-  const glyphs = [...text].map((char) => GLYPHS[char] ?? ["...", "...", "...", "...", "..."]);
-  // Glyph widths plus a one-column gap between neighbours.
-  const columns = glyphs.reduce((sum, glyph) => sum + (glyph[0]?.length ?? 0) + 1, -1);
-  const fitX = Math.max(1, Math.floor(size / columns));
-  const fitY = Math.max(1, Math.floor(size / GLYPH_HEIGHT));
-  // Glyphs may be up to twice as tall as wide, so "100%" stays legible at 16px.
-  const scaleY = Math.min(fitY, 2 * fitX);
+  const padding = Math.max(1, Math.floor(size / 16));
+  const available = size - 2 * padding;
+  const columns = columnsFor(text.length);
+  const fitX = Math.max(1, Math.floor(available / columns));
+  // Every text gets the height "100" can have, so the icon keeps its size as the battery drains.
+  // Glyphs may be up to twice as tall as wide, so three digits stay legible at 16px.
+  const scaleY = Math.max(
+    1,
+    Math.min(
+      Math.floor(available / GLYPH_HEIGHT),
+      2 * Math.floor(available / columnsFor(MAX_GLYPHS)),
+    ),
+  );
   const scaleX = Math.min(fitX, scaleY);
   const left = Math.floor((size - columns * scaleX) / 2);
   const top = Math.floor((size - GLYPH_HEIGHT * scaleY) / 2);
 
-  let glyphLeft = left;
-  for (const glyph of glyphs) {
+  for (const [index, char] of [...text].entries()) {
+    const glyph = GLYPHS[char] ?? [];
+    const glyphLeft = left + index * (GLYPH_WIDTH + 1) * scaleX;
     for (const [row, line] of glyph.entries()) {
       for (const [column, cell] of [...line].entries()) {
         if (cell !== "#") continue;
@@ -71,7 +85,6 @@ export function renderIcon(text: string, tone: Tone, size: number, taskbar: Task
         }
       }
     }
-    glyphLeft += ((glyph[0]?.length ?? 0) + 1) * scaleX;
   }
 
   return encodePng(pixels, size, size);

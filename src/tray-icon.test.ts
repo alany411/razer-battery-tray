@@ -72,14 +72,14 @@ function inkColors(pixels: Pixel[]): string[] {
 
 describe("renderIcon", () => {
   it.each([16, 24, 32])("renders a %ipx square PNG", (size) => {
-    const image = decodePng(renderIcon("87%", "normal", size, "dark"));
+    const image = decodePng(renderIcon("87", "normal", size, "dark"));
 
     expect(image.format).toEqual([8, 6]); // 8-bit RGBA
     expect([image.width, image.height]).toEqual([size, size]);
   });
 
   it("leaves everything but the text transparent", () => {
-    const image = decodePng(renderIcon("87%", "normal", 32, "dark"));
+    const image = decodePng(renderIcon("87", "normal", 32, "dark"));
 
     expect(image.pixel(0, 0)[3]).toBe(0);
     expect(image.pixel(1, 16)[3]).toBe(0);
@@ -88,7 +88,7 @@ describe("renderIcon", () => {
 
   it("draws the text in a single colour per tone", () => {
     const colors = (["normal", "low", "charging", "inactive"] as const).map((tone) =>
-      inkColors(inkOf("87%", tone)),
+      inkColors(inkOf("87", tone)),
     );
 
     for (const tone of colors) expect(tone).toHaveLength(1);
@@ -96,15 +96,15 @@ describe("renderIcon", () => {
   });
 
   it("uses dark text on a light taskbar", () => {
-    expect(inkColors(inkOf("87%", "normal", 16, "light"))).not.toEqual(
-      inkColors(inkOf("87%", "normal", 16, "dark")),
+    expect(inkColors(inkOf("87", "normal", 16, "light"))).not.toEqual(
+      inkColors(inkOf("87", "normal", 16, "dark")),
     );
-    expect(inkColors(inkOf("87%", "inactive", 16, "light"))).not.toEqual(
-      inkColors(inkOf("87%", "inactive", 16, "dark")),
+    expect(inkColors(inkOf("87", "inactive", 16, "light"))).not.toEqual(
+      inkColors(inkOf("87", "inactive", 16, "dark")),
     );
   });
 
-  it.each(["7%", "87%", "100%", "z", "-"])("draws %s centred in the icon", (text) => {
+  it.each(["7", "87", "100", "z", "-"])("draws %s centred in the icon", (text) => {
     const pixels = inkOf(text);
     const xs = pixels.map((p) => p.x);
     const ys = pixels.map((p) => p.y);
@@ -117,18 +117,13 @@ describe("renderIcon", () => {
     expect(Math.min(...ys) + Math.max(...ys)).toBeLessThanOrEqual(16);
   });
 
-  it("draws a percent sign", () => {
-    // A trailing blank keeps the same layout, so the only difference is the % glyph.
-    expect(inkOf("87%").length).toBeGreaterThan(inkOf("87 ").length);
-  });
-
-  it.each([16, 32])("keeps 100%% as tall as 87%% at %ipx", (size) => {
-    expect(inkHeight("100%", size)).toBe(inkHeight("87%", size));
+  it.each([16, 32])("keeps 100 as tall as 87 at %ipx", (size) => {
+    expect(inkHeight("100", size)).toBe(inkHeight("87", size));
   });
 
   it("renders different text differently", () => {
     expect(
-      renderIcon("87%", "normal", 32, "dark").equals(renderIcon("86%", "normal", 32, "dark")),
+      renderIcon("87", "normal", 32, "dark").equals(renderIcon("86", "normal", 32, "dark")),
     ).toBe(false);
   });
 });

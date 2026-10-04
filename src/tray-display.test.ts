@@ -7,7 +7,7 @@ describe("describePollResult", () => {
       describePollResult({ kind: "reading", reading: { percent: 87, charging: false } }),
     ).toEqual({
       tooltip: "DeathAdder V3 Pro — 87%",
-      iconText: "87%",
+      iconText: "87",
       tone: "normal",
     });
   });
@@ -17,7 +17,7 @@ describe("describePollResult", () => {
       describePollResult({ kind: "reading", reading: { percent: 15, charging: true } }),
     ).toEqual({
       tooltip: "DeathAdder V3 Pro — 15% (charging)",
-      iconText: "15%",
+      iconText: "15",
       tone: "charging",
     });
   });
