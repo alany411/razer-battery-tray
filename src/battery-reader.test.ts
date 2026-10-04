@@ -122,6 +122,14 @@ describe("pollBattery", () => {
     expect(transport.opened).toHaveLength(4);
   });
 
+  it("reports asleep when the dongle relays a 0% reading", async () => {
+    const transport = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(0, false) },
+    ]);
+
+    expect(await pollBattery(transport, options)).toEqual({ kind: "asleep" });
+  });
+
   it("reports unavailable when the dongle cannot be opened", async () => {
     const transport: HidTransport = {
       list: async () => [{ productId: DONGLE_PRODUCT_ID, path: "dongle" }],

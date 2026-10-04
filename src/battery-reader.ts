@@ -76,7 +76,7 @@ export async function pollBattery(
     if (attempt > 0) await sleep(RETRY_DELAY_MS);
     for (const device of candidates) {
       try {
-        return { kind: "reading", reading: await readFrom(transport, device.path, sleep) };
+        return { kind: "reading", reading: await readFrom(transport, device, sleep) };
       } catch (error) {
         lastReason = errorMessage(error);
         if (error instanceof NoAnswerError) mouseDidNotAnswer = true;
@@ -92,13 +92,17 @@ export async function pollBattery(
 
 async function readFrom(
   transport: HidTransport,
-  path: string,
+  device: HidDeviceInfo,
   sleep: (ms: number) => Promise<void>,
 ): Promise<BatteryReading> {
-  const handle = await transport.open(path);
+  const handle = await transport.open(device.path);
   try {
     const level = await query(handle, BATTERY_LEVEL, sleep);
     const charging = await query(handle, CHARGING_STATUS, sleep);
+    // A mouse that is truly empty is off, so a 0% reading through the dongle means it is asleep.
+    if (device.productId === DONGLE_PRODUCT_ID && level === 0 && charging !== 1) {
+      throw new NoAnswerError("mouse reported 0%");
+    }
     return { percent: Math.round((level / 255) * 100), charging: charging === 1 };
   } finally {
     await handle.close().catch(() => {});
