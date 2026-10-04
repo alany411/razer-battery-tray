@@ -43,23 +43,24 @@ export function renderIcon(text: string, tone: Tone, size: number): Buffer {
   const padding = Math.max(1, Math.floor(size / 16));
   const available = size - 2 * padding;
   const columns = text.length * (GLYPH_WIDTH + 1) - 1;
-  const scale = Math.max(
-    1,
-    Math.min(Math.floor(available / columns), Math.floor(available / GLYPH_HEIGHT)),
-  );
-  const left = Math.floor((size - columns * scale) / 2);
-  const top = Math.floor((size - GLYPH_HEIGHT * scale) / 2);
+  const fitX = Math.max(1, Math.floor(available / columns));
+  const fitY = Math.max(1, Math.floor(available / GLYPH_HEIGHT));
+  // Glyphs may be up to twice as tall as wide, so three digits stay legible at 16px.
+  const scaleY = Math.min(fitY, 2 * fitX);
+  const scaleX = Math.min(fitX, scaleY);
+  const left = Math.floor((size - columns * scaleX) / 2);
+  const top = Math.floor((size - GLYPH_HEIGHT * scaleY) / 2);
 
   for (const [index, char] of [...text].entries()) {
     const glyph = GLYPHS[char] ?? [];
-    const glyphLeft = left + index * (GLYPH_WIDTH + 1) * scale;
+    const glyphLeft = left + index * (GLYPH_WIDTH + 1) * scaleX;
     for (const [row, line] of glyph.entries()) {
       for (const [column, cell] of [...line].entries()) {
         if (cell !== "#") continue;
-        for (let dy = 0; dy < scale; dy++) {
-          for (let dx = 0; dx < scale; dx++) {
-            const x = glyphLeft + column * scale + dx;
-            const y = top + row * scale + dy;
+        for (let dy = 0; dy < scaleY; dy++) {
+          for (let dx = 0; dx < scaleX; dx++) {
+            const x = glyphLeft + column * scaleX + dx;
+            const y = top + row * scaleY + dy;
             if (x < size && y < size) setPixel(pixels, size, x, y, 255, 255, 255);
           }
         }

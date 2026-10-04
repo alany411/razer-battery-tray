@@ -52,6 +52,11 @@ function whitePixels(image: Image): { x: number; y: number }[] {
   return found;
 }
 
+function inkHeight(text: string, size: number): number {
+  const ys = whitePixels(decodePng(renderIcon(text, "normal", size))).map((p) => p.y);
+  return Math.max(...ys) - Math.min(...ys) + 1;
+}
+
 describe("renderIcon", () => {
   it.each([16, 32])("renders a %ipx square PNG", (size) => {
     const image = decodePng(renderIcon("87", "normal", size));
@@ -80,6 +85,10 @@ describe("renderIcon", () => {
     expect(Math.min(...xs) + Math.max(...xs)).toBeLessThanOrEqual(16);
     expect(Math.min(...ys) + Math.max(...ys)).toBeGreaterThanOrEqual(14);
     expect(Math.min(...ys) + Math.max(...ys)).toBeLessThanOrEqual(16);
+  });
+
+  it("keeps three digits as tall as two at 16px", () => {
+    expect(inkHeight("100", 16)).toBe(inkHeight("87", 16));
   });
 
   it("renders different text differently", () => {
