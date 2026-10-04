@@ -1,6 +1,6 @@
 # Razer Battery Tray
 
-A Windows tray app that shows the battery level of a Razer DeathAdder V3 Pro.
+A Windows tray app that shows the battery percentage of a Razer DeathAdder V3 Pro.
 
 ## Language
 
@@ -20,7 +20,7 @@ A percentage plus whether the mouse is charging.
 _Avoid_: Battery status, level
 
 **Asleep**:
-The dongle is present but the mouse does not answer a battery request.
+The dongle is present but the mouse does not answer a battery request, or answers 0% (a truly empty mouse is off).
 _Avoid_: Disconnected, offline
 
 **Unavailable**:

@@ -1,6 +1,6 @@
 # razer-battery-tray
 
-A Windows 11 tray app that shows the battery level of a Razer DeathAdder V3 Pro, connected through the HyperSpeed dongle or the USB cable.
+A Windows 11 tray app that shows the battery percentage of a Razer DeathAdder V3 Pro, connected through the HyperSpeed dongle or the USB cable.
 
 - The tray icon shows the battery percentage. It turns amber at 20% or below, red at 10% or below, and green while charging.
 - The tooltip and menu show the model, percentage and charging state, or **Asleep** when the dongle is plugged in but the mouse does not answer.
