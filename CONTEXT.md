@@ -13,8 +13,7 @@ The Razer HyperSpeed wireless receiver (PID `0x00B7`) that relays reports to the
 _Avoid_: Receiver, transceiver
 
 **Poll**:
-One attempt to get a battery reading from the mouse. It ends with a battery reading, Asleep, or Unavailable.
-_Avoid_: Read, check
+One scheduled or requested try, retries included, to get a battery reading from the mouse. It ends with a battery reading, Asleep, or Unavailable.
 
 **Battery reading**:
 A percentage plus whether the mouse is charging.
