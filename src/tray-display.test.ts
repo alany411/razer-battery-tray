@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { describeReading } from "./tray-display.js";
+import { describePoll } from "./tray-display.js";
 
-describe("describeReading", () => {
+describe("describePoll", () => {
   it("shows the percentage", () => {
-    expect(describeReading({ kind: "ok", percent: 87, charging: false })).toEqual({
+    expect(describePoll({ kind: "reading", reading: { percent: 87, charging: false } })).toEqual({
       tooltip: "DeathAdder V3 Pro — 87%",
       iconText: "87",
       tone: "normal",
@@ -11,7 +11,7 @@ describe("describeReading", () => {
   });
 
   it("marks charging", () => {
-    expect(describeReading({ kind: "ok", percent: 15, charging: true })).toEqual({
+    expect(describePoll({ kind: "reading", reading: { percent: 15, charging: true } })).toEqual({
       tooltip: "DeathAdder V3 Pro — 15% (charging)",
       iconText: "15",
       tone: "charging",
@@ -24,11 +24,13 @@ describe("describeReading", () => {
     [11, "low"],
     [10, "critical"],
   ] as const)("uses the %i%% tone %s", (percent, tone) => {
-    expect(describeReading({ kind: "ok", percent, charging: false }).tone).toBe(tone);
+    expect(describePoll({ kind: "reading", reading: { percent, charging: false } }).tone).toBe(
+      tone,
+    );
   });
 
   it("shows asleep", () => {
-    expect(describeReading({ kind: "asleep" })).toEqual({
+    expect(describePoll({ kind: "asleep" })).toEqual({
       tooltip: "DeathAdder V3 Pro — Asleep",
       iconText: "z",
       tone: "inactive",
@@ -36,7 +38,7 @@ describe("describeReading", () => {
   });
 
   it("shows unavailable with the reason", () => {
-    expect(describeReading({ kind: "unavailable", reason: "mouse not found" })).toEqual({
+    expect(describePoll({ kind: "unavailable", reason: "mouse not found" })).toEqual({
       tooltip: "DeathAdder V3 Pro — Unavailable (mouse not found)",
       iconText: "-",
       tone: "inactive",

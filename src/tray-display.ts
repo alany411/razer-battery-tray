@@ -1,4 +1,4 @@
-import type { BatteryReading } from "./battery-reader.js";
+import type { Poll } from "./battery-reader.js";
 import { ALERT_THRESHOLDS } from "./low-battery-alerts.js";
 
 export const MOUSE_NAME = "DeathAdder V3 Pro";
@@ -13,9 +13,10 @@ export interface TrayDisplay {
 
 const [LOW, CRITICAL] = ALERT_THRESHOLDS;
 
-export function describeReading(reading: BatteryReading): TrayDisplay {
-  switch (reading.kind) {
-    case "ok":
+export function describePoll(poll: Poll): TrayDisplay {
+  switch (poll.kind) {
+    case "reading": {
+      const { reading } = poll;
       return {
         tooltip: `${MOUSE_NAME} — ${reading.percent}%${reading.charging ? " (charging)" : ""}`,
         iconText: String(reading.percent),
@@ -27,11 +28,12 @@ export function describeReading(reading: BatteryReading): TrayDisplay {
               ? "low"
               : "normal",
       };
+    }
     case "asleep":
       return { tooltip: `${MOUSE_NAME} — Asleep`, iconText: "z", tone: "inactive" };
     case "unavailable":
       return {
-        tooltip: `${MOUSE_NAME} — Unavailable (${reading.reason})`,
+        tooltip: `${MOUSE_NAME} — Unavailable (${poll.reason})`,
         iconText: "-",
         tone: "inactive",
       };

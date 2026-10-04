@@ -12,8 +12,12 @@ _Avoid_: Device (ambiguous with the dongle)
 The Razer HyperSpeed wireless receiver (PID `0x00B7`) that relays reports to the mouse.
 _Avoid_: Receiver, transceiver
 
+**Poll**:
+One attempt to get a battery reading from the mouse. It ends with a battery reading, Asleep, or Unavailable.
+_Avoid_: Read, check
+
 **Battery reading**:
-One result of polling: a percentage plus whether the mouse is charging.
+A percentage plus whether the mouse is charging.
 _Avoid_: Battery status, level
 
 **Asleep**:

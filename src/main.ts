@@ -1,10 +1,10 @@
 import { Menu, Notification, Tray, app, nativeImage } from "electron";
 import type { NativeImage } from "electron";
-import { readBattery } from "./battery-reader.js";
+import { pollBattery } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
 import { LowBatteryAlerts } from "./low-battery-alerts.js";
 import { nodeHidTransport } from "./node-hid-transport.js";
-import { MOUSE_NAME, describeReading } from "./tray-display.js";
+import { MOUSE_NAME, describePoll } from "./tray-display.js";
 import type { TrayDisplay } from "./tray-display.js";
 import { renderIcon } from "./tray-icon.js";
 
@@ -42,9 +42,9 @@ async function refresh(): Promise<void> {
   if (refreshing) return;
   refreshing = true;
   try {
-    const reading = await readBattery(nodeHidTransport);
-    show(describeReading(reading));
-    notifyIfLow(reading);
+    const poll = await pollBattery(nodeHidTransport);
+    show(describePoll(poll));
+    if (poll.kind === "reading") notifyIfLow(poll.reading);
   } finally {
     refreshing = false;
   }
@@ -81,7 +81,7 @@ function trayIcon({ iconText, tone }: TrayDisplay): NativeImage {
 
 function notifyIfLow(reading: BatteryReading): void {
   const threshold = alerts.update(reading);
-  if (threshold === undefined || reading.kind !== "ok" || !Notification.isSupported()) return;
+  if (threshold === undefined || !Notification.isSupported()) return;
   new Notification({
     title: "Mouse battery low",
     body: `${MOUSE_NAME} is at ${reading.percent}%. Charge it soon.`,

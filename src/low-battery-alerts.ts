@@ -12,8 +12,6 @@ export class LowBatteryAlerts {
 
   /** Returns the threshold to alert for, if any. */
   update(reading: BatteryReading): number | undefined {
-    if (reading.kind !== "ok") return undefined;
-
     for (const threshold of this.armed.keys()) {
       if (reading.percent > threshold) this.armed.set(threshold, true);
     }

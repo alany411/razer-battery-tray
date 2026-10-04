@@ -3,7 +3,6 @@ import { LowBatteryAlerts } from "./low-battery-alerts.js";
 import type { BatteryReading } from "./battery-reader.js";
 
 const at = (percent: number, charging = false): BatteryReading => ({
-  kind: "ok",
   percent,
   charging,
 });
@@ -41,16 +40,5 @@ describe("LowBatteryAlerts", () => {
 
   it("does not alert while charging", () => {
     expect(feed(new LowBatteryAlerts(), [at(15, true), at(15)])).toEqual([undefined, 20]);
-  });
-
-  it("ignores readings without a percentage", () => {
-    expect(
-      feed(new LowBatteryAlerts(), [
-        at(15),
-        { kind: "asleep" },
-        { kind: "unavailable", reason: "x" },
-        at(15),
-      ]),
-    ).toEqual([20, undefined, undefined, undefined]);
   });
 });

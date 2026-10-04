@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DONGLE_PRODUCT_ID, WIRED_PRODUCT_ID, readBattery } from "./battery-reader.js";
+import { DONGLE_PRODUCT_ID, WIRED_PRODUCT_ID, pollBattery } from "./battery-reader.js";
 import type { HidDeviceInfo, HidHandle, HidTransport } from "./battery-reader.js";
 
 type Responder = (request: Uint8Array) => number | "error" | { status: number };
@@ -49,16 +49,15 @@ const awake =
 
 const options = { sleep: async () => {} };
 
-describe("readBattery", () => {
+describe("pollBattery", () => {
   it("reads the percentage and charging flag through the dongle", async () => {
     const transport = fakeTransport([
       { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
     ]);
 
-    expect(await readBattery(transport, options)).toEqual({
-      kind: "ok",
-      percent: 100,
-      charging: false,
+    expect(await pollBattery(transport, options)).toEqual({
+      kind: "reading",
+      reading: { percent: 100, charging: false },
     });
   });
 
@@ -67,10 +66,9 @@ describe("readBattery", () => {
       { productId: WIRED_PRODUCT_ID, path: "wired", respond: awake(128, true) },
     ]);
 
-    expect(await readBattery(transport, options)).toEqual({
-      kind: "ok",
-      percent: 50,
-      charging: true,
+    expect(await pollBattery(transport, options)).toEqual({
+      kind: "reading",
+      reading: { percent: 50, charging: true },
     });
   });
 
@@ -80,10 +78,9 @@ describe("readBattery", () => {
       { productId: DONGLE_PRODUCT_ID, path: "control", respond: awake(51, false) },
     ]);
 
-    expect(await readBattery(transport, options)).toEqual({
-      kind: "ok",
-      percent: 20,
-      charging: false,
+    expect(await pollBattery(transport, options)).toEqual({
+      kind: "reading",
+      reading: { percent: 20, charging: false },
     });
   });
 
@@ -92,7 +89,7 @@ describe("readBattery", () => {
       { productId: 0x1234, path: "keyboard", respond: awake(255, false) },
     ]);
 
-    expect(await readBattery(transport, options)).toEqual({
+    expect(await pollBattery(transport, options)).toEqual({
       kind: "unavailable",
       reason: "mouse not found",
     });
@@ -109,7 +106,10 @@ describe("readBattery", () => {
       },
     ]);
 
-    expect(await readBattery(transport, options)).toMatchObject({ kind: "ok", percent: 100 });
+    expect(await pollBattery(transport, options)).toMatchObject({
+      kind: "reading",
+      reading: { percent: 100 },
+    });
   });
 
   it("reports asleep when the dongle is present but the mouse never answers", async () => {
@@ -117,7 +117,7 @@ describe("readBattery", () => {
       { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: () => ({ status: 0x04 }) },
     ]);
 
-    expect(await readBattery(transport, options)).toEqual({ kind: "asleep" });
+    expect(await pollBattery(transport, options)).toEqual({ kind: "asleep" });
     // The first attempt plus 3 retries.
     expect(transport.opened).toHaveLength(4);
   });
@@ -130,7 +130,7 @@ describe("readBattery", () => {
       },
     };
 
-    expect(await readBattery(transport, options)).toEqual({
+    expect(await pollBattery(transport, options)).toEqual({
       kind: "unavailable",
       reason: "access denied",
     });
@@ -141,7 +141,7 @@ describe("readBattery", () => {
       { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: () => "error" },
     ]);
 
-    expect(await readBattery(transport, options)).toEqual({
+    expect(await pollBattery(transport, options)).toEqual({
       kind: "unavailable",
       reason: "read failed",
     });
@@ -153,7 +153,7 @@ describe("readBattery", () => {
       { productId: DONGLE_PRODUCT_ID, path: "control", respond: () => ({ status: 0x04 }) },
     ]);
 
-    expect(await readBattery(transport, options)).toEqual({ kind: "asleep" });
+    expect(await pollBattery(transport, options)).toEqual({ kind: "asleep" });
   });
 
   it("reports unavailable when the cable is connected but every attempt fails", async () => {
@@ -161,7 +161,7 @@ describe("readBattery", () => {
       { productId: WIRED_PRODUCT_ID, path: "wired", respond: () => "error" },
     ]);
 
-    expect(await readBattery(transport, options)).toEqual({
+    expect(await pollBattery(transport, options)).toEqual({
       kind: "unavailable",
       reason: "read failed",
     });
@@ -177,7 +177,7 @@ describe("readBattery", () => {
       },
     };
 
-    expect(await readBattery(transport, options)).toEqual({
+    expect(await pollBattery(transport, options)).toEqual({
       kind: "unavailable",
       reason: "hid unavailable",
     });

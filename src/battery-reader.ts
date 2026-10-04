@@ -11,8 +11,13 @@ export const RAZER_VENDOR_ID = 0x1532;
 export const WIRED_PRODUCT_ID = 0x00b6;
 export const DONGLE_PRODUCT_ID = 0x00b7;
 
-export type BatteryReading =
-  | { kind: "ok"; percent: number; charging: boolean }
+export interface BatteryReading {
+  percent: number;
+  charging: boolean;
+}
+
+export type Poll =
+  | { kind: "reading"; reading: BatteryReading }
   | { kind: "asleep" }
   | { kind: "unavailable"; reason: string };
 
@@ -45,10 +50,10 @@ const RESPONSE_DELAY_MS = 50;
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-export async function readBattery(
+export async function pollBattery(
   transport: HidTransport,
   { sleep = defaultSleep }: ReadOptions = {},
-): Promise<BatteryReading> {
+): Promise<Poll> {
   let devices: HidDeviceInfo[];
   try {
     devices = await transport.list();
@@ -71,7 +76,7 @@ export async function readBattery(
     if (attempt > 0) await sleep(RETRY_DELAY_MS);
     for (const device of candidates) {
       try {
-        return await readFrom(transport, device.path, sleep);
+        return { kind: "reading", reading: await readFrom(transport, device.path, sleep) };
       } catch (error) {
         lastReason = errorMessage(error);
         if (error instanceof NoAnswerError) mouseDidNotAnswer = true;
@@ -94,7 +99,7 @@ async function readFrom(
   try {
     const level = await query(handle, BATTERY_LEVEL, sleep);
     const charging = await query(handle, CHARGING_STATUS, sleep);
-    return { kind: "ok", percent: Math.round((level / 255) * 100), charging: charging === 1 };
+    return { percent: Math.round((level / 255) * 100), charging: charging === 1 };
   } finally {
     await handle.close().catch(() => {});
   }
