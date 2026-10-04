@@ -43,6 +43,7 @@
       "dist/**/*",
       "!dist/**/*.map",
       "!node_modules/node-hid/prebuilds/HID*-{linux,darwin}-*/**",
+      "!node_modules/node-hid/prebuilds/HID-win32-{ia32,arm64}/**",
       "!node_modules/node-hid/{src,hidapi}/**"
     ],
     "asarUnpack": [
