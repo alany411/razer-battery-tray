@@ -24,5 +24,5 @@ The dongle is present but the mouse does not answer a battery request, or answer
 _Avoid_: Disconnected, offline
 
 **Unavailable**:
-No reading could be taken after all retries (no mouse or dongle found, or requests kept failing).
+No reading could be taken after all retries or within the poll's 10-second limit (no mouse or dongle found, requests kept failing, or the poll ran out of time).
 _Avoid_: Error state
