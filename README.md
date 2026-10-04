@@ -7,6 +7,7 @@ A Windows 11 tray app that shows the battery level of a Razer DeathAdder V3 Pro,
 - A notification appears once when the battery drops to 20% and again at 10%.
 - The battery is read every 60 seconds. **Refresh now** in the menu reads it immediately.
 - **Start with Windows** in the menu launches the app at login.
+- Left- or right-click the tray icon to open the menu. Launching the app again while it runs does nothing, so there is only ever one tray icon.
 
 Razer Synapse can occasionally get in the way of reads. The app retries and shows **Unavailable** if it still cannot read the battery.
 
