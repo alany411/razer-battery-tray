@@ -1,0 +1,59 @@
+{
+  "name": "razer-battery-tray",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows tray app showing the battery percentage of a Razer DeathAdder V3 Pro",
+  "author": "Alan Yang",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "pnpm build && electron .",
+    "dist": "pnpm build && electron-builder --win --x64",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "node-hid": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "oxfmt": "^0.71.0",
+    "oxlint": "^1.86.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "build": {
+    "appId": "com.alanyang.razer-battery-tray",
+    "productName": "Razer Battery Tray",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "!dist/**/*.map",
+      "!node_modules/node-hid/prebuilds/HID*-{linux,darwin}-*/**",
+      "!node_modules/node-hid/prebuilds/HID-win32-{ia32,arm64}/**",
+      "!node_modules/node-hid/{src,hidapi}/**"
+    ],
+    "asarUnpack": [
+      "node_modules/node-hid/**"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  }
+}
