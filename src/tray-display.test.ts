@@ -41,9 +41,10 @@ describe("describePollResult", () => {
     });
   });
 
-  it("shows unavailable without the reason", () => {
+  it("keeps the unavailable reason out of the tooltip but in the details", () => {
     expect(describePollResult({ kind: "unavailable", reason: "mouse not found" })).toEqual({
       tooltip: "DeathAdder V3 Pro — Unavailable",
+      detail: "mouse not found",
       iconText: "-",
       tone: "inactive",
     });

@@ -57,6 +57,7 @@ function show(next: TrayDisplay): void {
 function menu(): Menu {
   return Menu.buildFromTemplate([
     { label: display.tooltip, enabled: false },
+    ...(display.detail ? [{ label: display.detail, enabled: false }] : []),
     { type: "separator" },
     { label: "Refresh now", click: () => void poll() },
     {

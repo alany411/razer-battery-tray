@@ -7,6 +7,8 @@ export type Tone = "normal" | "low" | "charging" | "inactive";
 
 export interface TrayDisplay {
   tooltip: string;
+  /** Extra explanation for the menu, e.g. why the battery is unavailable. */
+  detail?: string;
   iconText: string;
   tone: Tone;
 }
@@ -26,8 +28,13 @@ export function describePollResult(result: PollResult): TrayDisplay {
     case "asleep":
       return { tooltip: `${MOUSE_NAME} — Asleep`, iconText: "z", tone: "inactive" };
     case "unavailable":
-      // Windows cuts tray tooltips off at 127 characters, so the reason is only logged.
-      return { tooltip: `${MOUSE_NAME} — Unavailable`, iconText: "-", tone: "inactive" };
+      // Windows cuts tray tooltips off at 127 characters, so the reason goes in the menu instead.
+      return {
+        tooltip: `${MOUSE_NAME} — Unavailable`,
+        detail: result.reason,
+        iconText: "-",
+        tone: "inactive",
+      };
   }
 }
 
