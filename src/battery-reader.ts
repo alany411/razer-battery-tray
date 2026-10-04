@@ -57,19 +57,19 @@ export async function pollBattery(
   transport: HidTransport,
   { sleep = defaultSleep, timeoutMs = HID_TIMEOUT_MS }: PollOptions = {},
 ): Promise<PollResult> {
-  // A stuck device (or another app holding it) must not stall polling forever.
+  // A stuck mouse or dongle (or another app holding it) must not stall polling forever.
   transport = withTimeouts(transport, timeoutMs);
-  let devices: HidDeviceInfo[];
+  let interfaces: HidDeviceInfo[];
   try {
-    devices = await transport.list();
+    interfaces = await transport.list();
   } catch (error) {
     return { kind: "unavailable", reason: errorMessage(error) };
   }
 
   // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
   const candidates = [
-    ...devices.filter((d) => d.productId === WIRED_PRODUCT_ID),
-    ...devices.filter((d) => d.productId === DONGLE_PRODUCT_ID),
+    ...interfaces.filter((i) => i.productId === WIRED_PRODUCT_ID),
+    ...interfaces.filter((i) => i.productId === DONGLE_PRODUCT_ID),
   ];
   if (candidates.length === 0) {
     return { kind: "unavailable", reason: "mouse not found" };
@@ -79,9 +79,9 @@ export async function pollBattery(
   let mouseAsleep = false;
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt > 0) await sleep(RETRY_DELAY_MS);
-    for (const device of candidates) {
+    for (const candidate of candidates) {
       try {
-        return { kind: "reading", reading: await readFrom(transport, device, sleep) };
+        return { kind: "reading", reading: await readFrom(transport, candidate, sleep) };
       } catch (error) {
         lastReason = errorMessage(error);
         if (error instanceof MouseAsleepError) mouseAsleep = true;
@@ -89,24 +89,24 @@ export async function pollBattery(
     }
   }
 
-  const wired = candidates.some((d) => d.productId === WIRED_PRODUCT_ID);
+  const wired = candidates.some((c) => c.productId === WIRED_PRODUCT_ID);
   return !wired && mouseAsleep ? { kind: "asleep" } : { kind: "unavailable", reason: lastReason };
 }
 
 async function readFrom(
   transport: HidTransport,
-  device: HidDeviceInfo,
+  candidate: HidDeviceInfo,
   sleep: (ms: number) => Promise<void>,
 ): Promise<BatteryReading> {
-  const handle = await transport.open(device.path);
+  const handle = await transport.open(candidate.path);
   try {
-    const level = await query(handle, BATTERY_LEVEL, sleep);
-    const charging = await query(handle, CHARGING_STATUS, sleep);
+    const batteryByte = await query(handle, BATTERY_LEVEL, sleep);
+    const charging = (await query(handle, CHARGING_STATUS, sleep)) === 1;
     // A mouse that is truly empty is off, so a 0% reading through the dongle means it is asleep.
-    if (device.productId === DONGLE_PRODUCT_ID && level === 0 && charging !== 1) {
+    if (candidate.productId === DONGLE_PRODUCT_ID && batteryByte === 0 && !charging) {
       throw new MouseAsleepError("mouse reported 0%");
     }
-    return { percent: Math.round((level / 255) * 100), charging: charging === 1 };
+    return { percent: Math.round((batteryByte / 255) * 100), charging };
   } finally {
     await handle.close().catch(() => {});
   }

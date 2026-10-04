@@ -27,7 +27,7 @@ export interface Command {
   readonly dataSize: number;
 }
 
-/** Battery level, 0–255. */
+/** Raw battery byte, 0–255 (OpenRazer's name for the command). */
 export const BATTERY_LEVEL: Command = { commandClass: 0x07, commandId: 0x80, dataSize: 0x02 };
 
 /** Charging flag, 0 or 1. */
