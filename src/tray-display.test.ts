@@ -26,8 +26,8 @@ describe("describePollResult", () => {
     [21, "normal"],
     [20, "low"],
     [11, "low"],
-    [10, "critical"],
-  ] as const)("uses the %i%% tone %s", (percent, tone) => {
+    [10, "low"],
+  ] as const)("at %i percent uses the %s tone", (percent, tone) => {
     expect(
       describePollResult({ kind: "reading", reading: { percent, charging: false } }).tone,
     ).toBe(tone);

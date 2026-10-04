@@ -4,7 +4,6 @@ import type { Tone } from "./tray-display.js";
 const TONE_COLORS: Record<Tone, readonly [number, number, number]> = {
   normal: [64, 64, 64],
   low: [217, 119, 6],
-  critical: [220, 38, 38],
   charging: [22, 163, 74],
   inactive: [107, 114, 128],
 };

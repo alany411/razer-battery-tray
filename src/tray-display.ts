@@ -3,7 +3,7 @@ import { ALERT_THRESHOLDS } from "./low-battery-alerts.js";
 
 export const MOUSE_NAME = "DeathAdder V3 Pro";
 
-export type Tone = "normal" | "low" | "critical" | "charging" | "inactive";
+export type Tone = "normal" | "low" | "charging" | "inactive";
 
 export interface TrayDisplay {
   tooltip: string;
@@ -11,7 +11,7 @@ export interface TrayDisplay {
   tone: Tone;
 }
 
-const [LOW, CRITICAL] = ALERT_THRESHOLDS;
+const LOW = Math.max(...ALERT_THRESHOLDS);
 
 export function describePollResult(result: PollResult): TrayDisplay {
   switch (result.kind) {
@@ -20,13 +20,7 @@ export function describePollResult(result: PollResult): TrayDisplay {
       return {
         tooltip: `${MOUSE_NAME} — ${reading.percent}%${reading.charging ? " (charging)" : ""}`,
         iconText: String(reading.percent),
-        tone: reading.charging
-          ? "charging"
-          : reading.percent <= CRITICAL
-            ? "critical"
-            : reading.percent <= LOW
-              ? "low"
-              : "normal",
+        tone: reading.charging ? "charging" : reading.percent <= LOW ? "low" : "normal",
       };
     }
     case "asleep":

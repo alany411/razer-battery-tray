@@ -67,11 +67,11 @@ describe("renderIcon", () => {
 
   it("fills the background with the tone colour and leaves the corners clear", () => {
     const normal = decodePng(renderIcon("87", "normal", 32));
-    const critical = decodePng(renderIcon("87", "critical", 32));
+    const low = decodePng(renderIcon("87", "low", 32));
 
     expect(normal.pixel(0, 0)[3]).toBe(0);
     expect(normal.pixel(1, 16)[3]).toBe(255);
-    expect(critical.pixel(1, 16)).not.toEqual(normal.pixel(1, 16));
+    expect(low.pixel(1, 16)).not.toEqual(normal.pixel(1, 16));
   });
 
   it.each(["7", "87", "100", "z", "-"])("draws %s in white, centred inside the icon", (text) => {
