@@ -231,6 +231,35 @@ describe("pollBattery", () => {
     });
   });
 
+  it("retries when listing devices fails", async () => {
+    let lists = 0;
+    const dongle = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+    ]);
+    const transport: HidTransport = {
+      list: async () => {
+        if (lists++ === 0) throw new Error("hid busy");
+        return dongle.list();
+      },
+      open: dongle.open,
+    };
+
+    expect(await pollBattery(transport, options)).toMatchObject({ kind: "reading" });
+  });
+
+  it("retries when the dongle shows up late", async () => {
+    let lists = 0;
+    const dongle = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+    ]);
+    const transport: HidTransport = {
+      list: async () => (lists++ === 0 ? [] : dongle.list()),
+      open: dongle.open,
+    };
+
+    expect(await pollBattery(transport, options)).toMatchObject({ kind: "reading" });
+  });
+
   it("reports unavailable when listing devices fails", async () => {
     const transport: HidTransport = {
       list: async () => {

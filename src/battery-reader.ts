@@ -59,26 +59,32 @@ export async function pollBattery(
 ): Promise<PollResult> {
   // A stuck mouse or dongle (or another app holding it) must not stall polling forever.
   transport = withTimeouts(transport, timeoutMs);
-  let interfaces: HidDeviceInfo[];
-  try {
-    interfaces = await transport.list();
-  } catch (error) {
-    return { kind: "unavailable", reason: errorMessage(error) };
-  }
-
-  // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
-  const candidates = [
-    ...interfaces.filter((i) => i.productId === WIRED_PRODUCT_ID),
-    ...interfaces.filter((i) => i.productId === DONGLE_PRODUCT_ID),
-  ];
-  if (candidates.length === 0) {
-    return { kind: "unavailable", reason: "mouse not found" };
-  }
 
   let lastReason = "";
   let mouseAsleep = false;
+  let wired = false;
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt > 0) await sleep(RETRY_DELAY_MS);
+
+    // List again on every attempt: the dongle may show up late, e.g. right after resume.
+    let interfaces: HidDeviceInfo[];
+    try {
+      interfaces = await transport.list();
+    } catch (error) {
+      lastReason = errorMessage(error);
+      continue;
+    }
+    // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
+    const candidates = [
+      ...interfaces.filter((i) => i.productId === WIRED_PRODUCT_ID),
+      ...interfaces.filter((i) => i.productId === DONGLE_PRODUCT_ID),
+    ];
+    if (candidates.length === 0) {
+      lastReason = "mouse not found";
+      continue;
+    }
+    if (candidates.some((c) => c.productId === WIRED_PRODUCT_ID)) wired = true;
+
     for (const candidate of candidates) {
       try {
         return { kind: "reading", reading: await readFrom(transport, candidate, sleep) };
@@ -89,7 +95,6 @@ export async function pollBattery(
     }
   }
 
-  const wired = candidates.some((c) => c.productId === WIRED_PRODUCT_ID);
   return !wired && mouseAsleep ? { kind: "asleep" } : { kind: "unavailable", reason: lastReason };
 }
 
