@@ -20,7 +20,7 @@ A percentage plus whether the mouse is charging.
 _Avoid_: Battery status, level
 
 **Asleep**:
-The dongle is present but the mouse does not answer a battery request, or answers 0% while not charging (a truly empty mouse is off).
+The dongle is present but the mouse does not answer a battery request, or answers 0% while not charging (a truly empty mouse is off). Never applies while the cable is connected, since a cabled mouse is awake.
 _Avoid_: Disconnected, offline
 
 **Unavailable**:
