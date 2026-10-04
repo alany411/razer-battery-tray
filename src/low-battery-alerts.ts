@@ -10,19 +10,17 @@ export class LowBatteryAlerts {
     this.armed = new Map(thresholds.map((t) => [t, true]));
   }
 
-  /** Returns the threshold to alert for, if any. */
-  update(reading: BatteryReading): number | undefined {
-    for (const threshold of this.armed.keys()) {
-      if (reading.percent > threshold) this.armed.set(threshold, true);
-    }
-    if (reading.charging) return undefined;
-
-    let alert: number | undefined;
+  /** Returns the thresholds to alert for, highest first. */
+  update(reading: BatteryReading): number[] {
+    const alerts: number[] = [];
     for (const [threshold, armed] of this.armed) {
-      if (reading.percent > threshold) continue;
-      if (armed && (alert === undefined || threshold < alert)) alert = threshold;
-      this.armed.set(threshold, false);
+      if (reading.percent > threshold) {
+        this.armed.set(threshold, true);
+      } else if (armed) {
+        alerts.push(threshold);
+        this.armed.set(threshold, false);
+      }
     }
-    return alert;
+    return alerts.toSorted((a, b) => b - a);
   }
 }

@@ -80,10 +80,12 @@ function trayIcon({ iconText, tone }: TrayDisplay): NativeImage {
 }
 
 function notifyIfLow(reading: BatteryReading): void {
-  const threshold = alerts.update(reading);
-  if (threshold === undefined || !Notification.isSupported()) return;
-  new Notification({
-    title: "Mouse battery low",
-    body: `${MOUSE_NAME} is at ${reading.percent}%. Charge it soon.`,
-  }).show();
+  const thresholds = alerts.update(reading);
+  if (!Notification.isSupported()) return;
+  for (const threshold of thresholds) {
+    new Notification({
+      title: `Mouse battery at or below ${threshold}%`,
+      body: `${MOUSE_NAME} is at ${reading.percent}%. Charge it soon.`,
+    }).show();
+  }
 }
