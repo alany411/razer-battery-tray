@@ -13,7 +13,7 @@ Razer Synapse can occasionally get in the way of reads. The app retries for up t
 
 ## Development
 
-Requires Node.js 24 and pnpm.
+Requires Node.js 24 and pnpm 12 or newer (pnpm settings live in `pnpm-workspace.yaml`).
 
 ```sh
 pnpm install
