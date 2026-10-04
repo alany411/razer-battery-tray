@@ -131,7 +131,12 @@ function withTimeouts(transport: HidTransport, ms: number): HidTransport {
   return {
     list: () => timeout(transport.list(), ms),
     open: async (path) => {
-      const handle = await timeout(transport.open(path), ms);
+      const opening = transport.open(path);
+      const handle = await timeout(opening, ms).catch((error: unknown) => {
+        // If it opens after all, close it so the interface is not left held.
+        void opening.then((late) => late.close()).catch(() => {});
+        throw error;
+      });
       return {
         sendFeatureReport: (data) => timeout(handle.sendFeatureReport(data), ms),
         getFeatureReport: (reportId, length) =>

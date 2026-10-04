@@ -193,6 +193,30 @@ describe("pollBattery", () => {
     });
   });
 
+  it("closes a handle that opens only after its timeout", async () => {
+    let closed = false;
+    let finishOpening: ((handle: HidHandle) => void) | undefined;
+    const transport: HidTransport = {
+      list: async () => [{ productId: WIRED_PRODUCT_ID, path: "wired" }],
+      open: () =>
+        new Promise<HidHandle>((resolve) => {
+          finishOpening = resolve;
+        }),
+    };
+
+    await pollBattery(transport, { ...options, timeoutMs: 5 });
+    finishOpening?.({
+      sendFeatureReport: hang,
+      getFeatureReport: hang,
+      close: async () => {
+        closed = true;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(closed).toBe(true);
+  });
+
   it("gives up when listing devices never returns", async () => {
     const transport: HidTransport = {
       list: hang,
