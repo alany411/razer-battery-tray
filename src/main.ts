@@ -9,6 +9,8 @@ import { MOUSE_NAME, describeLowBattery, describePollResult } from "./tray-displ
 import type { TrayDisplay } from "./tray-display.js";
 import { rerunQueue } from "./rerun-queue.js";
 import { readStartsAtLogin } from "./startup-entry.js";
+import { findSynapse, openSynapse } from "./synapse.js";
+import type { SynapseLauncher } from "./synapse.js";
 import { readTaskbar } from "./taskbar-theme.js";
 import { renderIcon } from "./tray-icon.js";
 import type { Taskbar } from "./tray-icon.js";
@@ -39,8 +41,8 @@ function start(): void {
   tray.setToolTip(display.tooltip);
   // Build the menu as it opens, so the Start with Windows checkbox is never stale.
   tray.on("right-click", () => {
-    void readStartsAtLogin(APP_ID).then((startsAtLogin) =>
-      tray?.popUpContextMenu(menu(startsAtLogin)),
+    void Promise.all([readStartsAtLogin(APP_ID), findSynapse()]).then(([startsAtLogin, synapse]) =>
+      tray?.popUpContextMenu(menu(startsAtLogin, synapse)),
     );
   });
 
@@ -75,12 +77,17 @@ function show(next: TrayDisplay): void {
   tray?.setToolTip(display.tooltip);
 }
 
-function menu(startsAtLogin: boolean): Menu {
+function menu(startsAtLogin: boolean, synapse: SynapseLauncher | undefined): Menu {
   return Menu.buildFromTemplate([
     { label: display.tooltip, enabled: false },
     ...(display.detail ? [{ label: display.detail, enabled: false }] : []),
     { type: "separator" },
     { label: "Refresh now", click: () => void poll() },
+    {
+      label: "Open Synapse",
+      enabled: synapse !== undefined,
+      click: () => synapse && openSynapse(synapse),
+    },
     {
       label: "Start with Windows",
       type: "checkbox",
