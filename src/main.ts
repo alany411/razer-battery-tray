@@ -15,7 +15,12 @@ const ICON_SCALES = [1, 1.5, 2] as const;
 
 const alerts = new LowBatteryAlerts();
 let tray: Tray | undefined;
-let refreshing = false;
+let display: TrayDisplay = {
+  tooltip: `${MOUSE_NAME} — Reading battery…`,
+  iconText: "-",
+  tone: "inactive",
+};
+let polling = false;
 
 if (app.requestSingleInstanceLock()) {
   app.setAppUserModelId(APP_ID);
@@ -25,52 +30,49 @@ if (app.requestSingleInstanceLock()) {
 }
 
 function start(): void {
-  const display: TrayDisplay = {
-    tooltip: `${MOUSE_NAME} — Reading battery…`,
-    iconText: "-",
-    tone: "inactive",
-  };
   tray = new Tray(trayIcon(display));
-  tray.on("click", () => tray?.popUpContextMenu());
-  show(display);
+  tray.setToolTip(display.tooltip);
+  // Build the menu as it opens, so the Start with Windows checkbox is never stale.
+  tray.on("right-click", () => tray?.popUpContextMenu(menu()));
 
-  void refresh();
-  setInterval(() => void refresh(), POLL_INTERVAL_MS);
+  void poll();
+  setInterval(() => void poll(), POLL_INTERVAL_MS);
 }
 
-async function refresh(): Promise<void> {
-  if (refreshing) return;
-  refreshing = true;
+async function poll(): Promise<void> {
+  if (polling) return;
+  polling = true;
   try {
     const result = await pollBattery(nodeHidTransport);
     if (result.kind === "unavailable") console.warn(`Battery unavailable: ${result.reason}`);
     show(describePollResult(result));
     if (result.kind === "reading") notifyIfLow(result.reading);
   } finally {
-    refreshing = false;
+    polling = false;
   }
 }
 
-function show(display: TrayDisplay): void {
-  if (!tray) return;
-  tray.setImage(trayIcon(display));
-  tray.setToolTip(display.tooltip);
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: display.tooltip, enabled: false },
-      { type: "separator" },
-      { label: "Refresh now", click: () => void refresh() },
-      {
-        label: "Start with Windows",
-        type: "checkbox",
-        // Unlike openAtLogin, this is false when the app is disabled in Startup Apps.
-        checked: app.getLoginItemSettings().executableWillLaunchAtLogin,
-        click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
-      },
-      { type: "separator" },
-      { label: "Quit", role: "quit" },
-    ]),
-  );
+function show(next: TrayDisplay): void {
+  display = next;
+  tray?.setImage(trayIcon(display));
+  tray?.setToolTip(display.tooltip);
+}
+
+function menu(): Menu {
+  return Menu.buildFromTemplate([
+    { label: display.tooltip, enabled: false },
+    { type: "separator" },
+    { label: "Refresh now", click: () => void poll() },
+    {
+      label: "Start with Windows",
+      type: "checkbox",
+      // Unlike openAtLogin, this is false when the app is disabled in Startup Apps.
+      checked: app.getLoginItemSettings().executableWillLaunchAtLogin,
+      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+    },
+    { type: "separator" },
+    { label: "Quit", role: "quit" },
+  ]);
 }
 
 function trayIcon({ iconText, tone }: TrayDisplay): NativeImage {
