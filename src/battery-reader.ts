@@ -58,14 +58,38 @@ const POLL_DEADLINE_MS = 10_000;
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-export async function pollBattery(
+/**
+ * Returns a poll function that remembers which HID interface last gave a battery reading and
+ * tries it first, so interfaces that stall cannot use up the poll's time limit.
+ */
+export function createBatteryPoller(
+  transport: HidTransport,
+  options: PollOptions = {},
+): () => Promise<PollResult> {
+  const memory: PollMemory = {};
+  return () => poll(transport, options, memory);
+}
+
+export function pollBattery(
+  transport: HidTransport,
+  options: PollOptions = {},
+): Promise<PollResult> {
+  return poll(transport, options, {});
+}
+
+interface PollMemory {
+  lastPath?: string;
+}
+
+async function poll(
   transport: HidTransport,
   {
     sleep = defaultSleep,
     timeoutMs = HID_TIMEOUT_MS,
     deadlineMs = POLL_DEADLINE_MS,
     now = Date.now,
-  }: PollOptions = {},
+  }: PollOptions,
+  memory: PollMemory,
 ): Promise<PollResult> {
   const deadline = now() + deadlineMs;
   const remaining = () => Math.max(0, deadline - now());
@@ -91,10 +115,11 @@ export async function pollBattery(
       continue;
     }
     // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
+    // Then the interface that answered last time.
     const candidates = [
       ...interfaces.filter((i) => i.productId === WIRED_PRODUCT_ID),
       ...interfaces.filter((i) => i.productId === DONGLE_PRODUCT_ID),
-    ];
+    ].toSorted((a, b) => Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath));
     if (candidates.length === 0) {
       lastReason = "mouse not found";
       mouseAsleep = false;
@@ -110,7 +135,9 @@ export async function pollBattery(
         break attempts;
       }
       try {
-        return { kind: "reading", reading: await readFrom(transport, candidate, sleep) };
+        const reading = await readFrom(transport, candidate, sleep);
+        memory.lastPath = candidate.path;
+        return { kind: "reading", reading };
       } catch (error) {
         lastReason = errorMessage(error);
         if (error instanceof MouseAsleepError) mouseAsleep = true;

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DONGLE_PRODUCT_ID, WIRED_PRODUCT_ID, pollBattery } from "./battery-reader.js";
+import {
+  DONGLE_PRODUCT_ID,
+  WIRED_PRODUCT_ID,
+  createBatteryPoller,
+  pollBattery,
+} from "./battery-reader.js";
 import type { HidDeviceInfo, HidHandle, HidTransport } from "./battery-reader.js";
 
 type Responder = (request: Uint8Array) => number | "error" | { status: number };
@@ -341,5 +346,20 @@ describe("pollBattery", () => {
       kind: "unavailable",
       reason: "hid unavailable",
     });
+  });
+});
+
+describe("createBatteryPoller", () => {
+  it("tries the interface that last answered first", async () => {
+    const transport = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: () => "error" },
+      { productId: DONGLE_PRODUCT_ID, path: "control", respond: awake(255, false) },
+    ]);
+    const poll = createBatteryPoller(transport, options);
+
+    await poll();
+    await poll();
+
+    expect(transport.opened).toEqual(["stuck", "control", "control"]);
   });
 });

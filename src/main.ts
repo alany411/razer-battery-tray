@@ -1,7 +1,7 @@
 import { Menu, Notification, Tray, app, nativeImage } from "electron";
 import type { NativeImage } from "electron";
 import { APP_ID } from "./app-id.js";
-import { pollBattery } from "./battery-reader.js";
+import { createBatteryPoller } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
 import { LowBatteryAlerts } from "./low-battery-alerts.js";
 import { nodeHidTransport } from "./node-hid-transport.js";
@@ -15,6 +15,7 @@ const POLL_INTERVAL_MS = 60_000;
 const ICON_SCALES = [1, 1.5, 2] as const;
 
 const alerts = new LowBatteryAlerts();
+const pollBattery = createBatteryPoller(nodeHidTransport);
 let tray: Tray | undefined;
 let display: TrayDisplay = {
   tooltip: `${MOUSE_NAME} — Reading battery…`,
@@ -41,7 +42,7 @@ function start(): void {
 
 // Refresh now during a poll queues another poll instead of being dropped.
 const poll = rerunQueue(async () => {
-  const result = await pollBattery(nodeHidTransport);
+  const result = await pollBattery();
   if (result.kind === "unavailable") console.warn(`Battery unavailable: ${result.reason}`);
   show(describePollResult(result));
   if (result.kind === "reading") notifyIfLow(result.reading);
