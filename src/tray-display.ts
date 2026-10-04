@@ -32,10 +32,7 @@ export function describePoll(poll: Poll): TrayDisplay {
     case "asleep":
       return { tooltip: `${MOUSE_NAME} — Asleep`, iconText: "z", tone: "inactive" };
     case "unavailable":
-      return {
-        tooltip: `${MOUSE_NAME} — Unavailable (${poll.reason})`,
-        iconText: "-",
-        tone: "inactive",
-      };
+      // Windows cuts tray tooltips off at 127 characters, so the reason is only logged.
+      return { tooltip: `${MOUSE_NAME} — Unavailable`, iconText: "-", tone: "inactive" };
   }
 }

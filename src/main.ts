@@ -43,6 +43,7 @@ async function refresh(): Promise<void> {
   refreshing = true;
   try {
     const poll = await pollBattery(nodeHidTransport);
+    if (poll.kind === "unavailable") console.warn(`Battery unavailable: ${poll.reason}`);
     show(describePoll(poll));
     if (poll.kind === "reading") notifyIfLow(poll.reading);
   } finally {
