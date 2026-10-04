@@ -59,7 +59,25 @@ describe("parseResponse", () => {
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, 0x04, 0))).toEqual({
       ok: false,
       reason: "status 0x04",
-      replied: true,
+      mouseDidNotAnswer: true,
+    });
+  });
+
+  it.each([0x03, 0x04])("marks status %i as the mouse not answering", (status) => {
+    const request = buildRequest(BATTERY_LEVEL);
+
+    expect(parseResponse(BATTERY_LEVEL, responseFor(request, status, 0))).toMatchObject({
+      ok: false,
+      mouseDidNotAnswer: true,
+    });
+  });
+
+  it.each([0x01, 0x05])("does not treat status %s as the mouse not answering", (status) => {
+    const request = buildRequest(BATTERY_LEVEL);
+
+    expect(parseResponse(BATTERY_LEVEL, responseFor(request, status, 0))).toMatchObject({
+      ok: false,
+      mouseDidNotAnswer: false,
     });
   });
 
@@ -69,7 +87,7 @@ describe("parseResponse", () => {
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, 0x02, 1))).toEqual({
       ok: false,
       reason: "mismatched command",
-      replied: false,
+      mouseDidNotAnswer: false,
     });
   });
 
@@ -77,7 +95,7 @@ describe("parseResponse", () => {
     expect(parseResponse(BATTERY_LEVEL, new Uint8Array(10))).toEqual({
       ok: false,
       reason: "unexpected length 10",
-      replied: false,
+      mouseDidNotAnswer: false,
     });
   });
 });

@@ -116,7 +116,7 @@ async function query(
   await sleep(RESPONSE_DELAY_MS);
   const parsed = parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));
   if (!parsed.ok)
-    throw parsed.replied ? new NoAnswerError(parsed.reason) : new Error(parsed.reason);
+    throw parsed.mouseDidNotAnswer ? new NoAnswerError(parsed.reason) : new Error(parsed.reason);
   return parsed.value;
 }
 
