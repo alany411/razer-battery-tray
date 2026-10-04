@@ -79,6 +79,26 @@ describe("pollBattery", () => {
     });
   });
 
+  it.each([
+    { productId: 0x00c3, name: "HyperPolling dongle (0xc3)" },
+    { productId: 0x00c2, name: "HyperPolling model's cable (0xc2)" },
+  ])("reads through the $name", async ({ productId }) => {
+    const transport = fakeTransport([{ productId, path: "mouse", respond: awake(255, false) }]);
+
+    expect(await pollBattery(transport, options)).toEqual({
+      kind: "reading",
+      reading: { percent: 100, charging: false },
+    });
+  });
+
+  it("reports asleep through the HyperPolling dongle", async () => {
+    const transport = fakeTransport([
+      { productId: 0x00c3, path: "dongle", respond: () => ({ status: 0x04 }) },
+    ]);
+
+    expect(await pollBattery(transport, options)).toEqual({ kind: "asleep" });
+  });
+
   it("tries each matching interface until one answers", async () => {
     const transport = fakeTransport([
       { productId: DONGLE_PRODUCT_ID, path: "wrong-interface", respond: () => "error" },

@@ -10,6 +10,14 @@ import type { Command } from "./razer-protocol.js";
 export const RAZER_VENDOR_ID = 0x1532;
 export const WIRED_PRODUCT_ID = 0x00b6;
 export const DONGLE_PRODUCT_ID = 0x00b7;
+// The DeathAdder V3 Pro sold with the HyperPolling dongle uses different IDs (OpenRazer's *_ALT).
+const HYPERPOLLING_WIRED_PRODUCT_ID = 0x00c2;
+const HYPERPOLLING_DONGLE_PRODUCT_ID = 0x00c3;
+
+const isWired = (i: HidDeviceInfo) =>
+  i.productId === WIRED_PRODUCT_ID || i.productId === HYPERPOLLING_WIRED_PRODUCT_ID;
+const isDongle = (i: HidDeviceInfo) =>
+  i.productId === DONGLE_PRODUCT_ID || i.productId === HYPERPOLLING_DONGLE_PRODUCT_ID;
 
 export interface BatteryReading {
   percent: number;
@@ -118,19 +126,18 @@ async function poll(
     }
     // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
     // Then the interface that answered last time.
-    const candidates = [
-      ...interfaces.filter((i) => i.productId === WIRED_PRODUCT_ID),
-      ...interfaces.filter((i) => i.productId === DONGLE_PRODUCT_ID),
-    ].toSorted((a, b) => Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath));
+    const candidates = [...interfaces.filter(isWired), ...interfaces.filter(isDongle)].toSorted(
+      (a, b) => Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath),
+    );
     if (candidates.length === 0) {
       lastReason = "mouse not found";
       mouseAsleep = false;
       continue;
     }
     // Like Asleep, the cable counts only if it is still connected on the latest attempt.
-    wired = candidates.some((c) => c.productId === WIRED_PRODUCT_ID);
+    wired = candidates.some(isWired);
     // Asleep needs the dongle to be present now, not just on an earlier attempt.
-    if (!candidates.some((c) => c.productId === DONGLE_PRODUCT_ID)) mouseAsleep = false;
+    if (!candidates.some(isDongle)) mouseAsleep = false;
 
     for (const candidate of candidates) {
       if (remaining() === 0) {
@@ -161,7 +168,7 @@ async function readFrom(
     const batteryByte = await query(handle, BATTERY_LEVEL, sleep);
     const charging = (await query(handle, CHARGING_STATUS, sleep)) === 1;
     // A mouse that is truly empty is off, so a 0% reading through the dongle means it is asleep.
-    if (candidate.productId === DONGLE_PRODUCT_ID && batteryByte === 0 && !charging) {
+    if (isDongle(candidate) && batteryByte === 0 && !charging) {
       throw new MouseAsleepError("mouse reported 0%");
     }
     return { percent: Math.round((batteryByte / 255) * 100), charging };
