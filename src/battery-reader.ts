@@ -122,7 +122,7 @@ async function query(
   return parsed.value;
 }
 
-/** The mouse did not answer the request, or answered 0% through the dongle. */
+/** The mouse did not answer the request, or answered 0% through the dongle while not charging. */
 class MouseAsleepError extends Error {}
 
 function errorMessage(error: unknown): string {
