@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "pnpm build && electron .",
-    "dist": "pnpm build && electron-builder --win nsis --x64",
+    "dist": "pnpm build && electron-builder --win --x64",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "format": "oxfmt",
@@ -30,8 +30,38 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "electron",
       "node-hid"
     ]
+  },
+  "build": {
+    "appId": "com.alanyang.razer-battery-tray",
+    "productName": "Razer Battery Tray",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "!dist/**/*.map",
+      "!node_modules/node-hid/prebuilds/HID*-{linux,darwin}-*/**",
+      "!node_modules/node-hid/{src,hidapi}/**"
+    ],
+    "asarUnpack": [
+      "node_modules/node-hid/**"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
