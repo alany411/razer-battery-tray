@@ -1,5 +1,6 @@
 import { Menu, Notification, Tray, app, nativeImage } from "electron";
 import type { NativeImage } from "electron";
+import { APP_ID } from "./app-id.js";
 import { pollBattery } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
 import { LowBatteryAlerts } from "./low-battery-alerts.js";
@@ -8,7 +9,6 @@ import { MOUSE_NAME, describeLowBattery, describePollResult } from "./tray-displ
 import type { TrayDisplay } from "./tray-display.js";
 import { renderIcon } from "./tray-icon.js";
 
-const APP_ID = "com.alanyang.razer-battery-tray";
 const POLL_INTERVAL_MS = 60_000;
 // Icon sizes for 100%, 150% and 200% display scaling.
 const ICON_SCALES = [1, 1.5, 2] as const;
