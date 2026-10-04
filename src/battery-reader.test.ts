@@ -284,6 +284,33 @@ describe("pollBattery", () => {
     expect(transport.opened).toHaveLength(5);
   });
 
+  it("still reports asleep when the deadline cuts the poll short", async () => {
+    let clock = 0;
+    const transport = fakeTransport([
+      {
+        productId: DONGLE_PRODUCT_ID,
+        path: "control",
+        respond: () => ({ status: 0x04 }),
+      },
+      {
+        productId: DONGLE_PRODUCT_ID,
+        path: "stuck",
+        respond: () => {
+          clock += 2_000;
+          return "error" as const;
+        },
+      },
+    ]);
+
+    const result = await pollBattery(transport, {
+      ...options,
+      now: () => clock,
+      deadlineMs: 3_000,
+    });
+
+    expect(result).toEqual({ kind: "asleep" });
+  });
+
   it("reports unavailable when listing devices fails", async () => {
     const transport: HidTransport = {
       list: async () => {

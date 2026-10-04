@@ -75,9 +75,12 @@ export async function pollBattery(
   let lastReason = "";
   let mouseAsleep = false;
   let wired = false;
-  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+  attempts: for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt > 0) await sleep(RETRY_DELAY_MS);
-    if (remaining() === 0) return { kind: "unavailable", reason: "poll timed out" };
+    if (remaining() === 0) {
+      lastReason = "poll timed out";
+      break;
+    }
 
     // List again on every attempt: the dongle may show up late, e.g. right after resume.
     let interfaces: HidDeviceInfo[];
@@ -99,7 +102,10 @@ export async function pollBattery(
     if (candidates.some((c) => c.productId === WIRED_PRODUCT_ID)) wired = true;
 
     for (const candidate of candidates) {
-      if (remaining() === 0) return { kind: "unavailable", reason: "poll timed out" };
+      if (remaining() === 0) {
+        lastReason = "poll timed out";
+        break attempts;
+      }
       try {
         return { kind: "reading", reading: await readFrom(transport, candidate, sleep) };
       } catch (error) {
