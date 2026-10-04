@@ -332,6 +332,23 @@ describe("pollBattery", () => {
     });
   });
 
+  it("reports asleep when the cable is unplugged mid-poll", async () => {
+    let lists = 0;
+    const both = fakeTransport([
+      { productId: WIRED_PRODUCT_ID, path: "wired", respond: () => "error" },
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: () => ({ status: 0x04 }) },
+    ]);
+    const transport: HidTransport = {
+      list: async () => {
+        const interfaces = await both.list();
+        return lists++ === 0 ? interfaces : interfaces.filter((i) => i.path === "dongle");
+      },
+      open: both.open,
+    };
+
+    expect(await pollBattery(transport, options)).toEqual({ kind: "asleep" });
+  });
+
   it("reports unavailable when listing devices fails", async () => {
     const transport: HidTransport = {
       list: async () => {

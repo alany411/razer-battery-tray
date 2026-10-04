@@ -125,7 +125,8 @@ async function poll(
       mouseAsleep = false;
       continue;
     }
-    if (candidates.some((c) => c.productId === WIRED_PRODUCT_ID)) wired = true;
+    // Like Asleep, the cable counts only if it is still connected on the latest attempt.
+    wired = candidates.some((c) => c.productId === WIRED_PRODUCT_ID);
     // Asleep needs the dongle to be present now, not just on an earlier attempt.
     if (!candidates.some((c) => c.productId === DONGLE_PRODUCT_ID)) mouseAsleep = false;
 
