@@ -540,29 +540,27 @@ describe("createBatteryPoller", () => {
   });
 
   it("keeps a device that stalls from making another one unavailable", async () => {
-    let clock = 0;
-    const transport = fakeTransport([
-      {
-        productId: DONGLE_PRODUCT_ID,
-        path: "stuck",
-        respond: () => {
-          clock += 2_000;
-          return "error" as const;
-        },
-      },
+    const devices = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
       { productId: 0x00c1, path: "viper", respond: awake(255, false) },
     ]);
+    const transport: HidTransport = {
+      list: devices.list,
+      open: async (path) => {
+        const handle = await devices.open(path);
+        return path === "stuck" ? { ...handle, getFeatureReport: hang } : handle;
+      },
+    };
 
-    const round = await createBatteryPoller(transport, {
-      ...options,
-      now: () => clock,
-      deadlineMs: 10_000,
-    })();
+    const round = await createBatteryPoller(transport, { ...options, timeoutMs: 5 })();
 
     expect(round).toEqual({
       kind: "devices",
       devices: [
-        { model: DEATHADDER_V3_PRO, result: { kind: "unavailable", reason: "read failed" } },
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "unavailable", reason: "HID request timed out" },
+        },
         {
           model: model("Viper V3 Pro"),
           result: { kind: "reading", reading: { percent: 100, charging: false } },
