@@ -58,7 +58,8 @@ export const DEVICE_TABLE: readonly DeviceModel[] = [
   mouse("DeathAdder V4 Pro", 0x1f, { wired: [0x00be], wireless: [0x00bf] }),
   mouse("DeathAdder V2 Pro", 0x3f, { wired: [0x007c], wireless: [0x007d] }),
   mouse("DeathAdder V2 X HyperSpeed", 0x1f, { wireless: [0x009c] }, AA),
-  mouse("Mouse on HyperPolling dongle", 0x1f, { wireless: [0x00b3] }),
+  // The mouse behind this dongle is not known, so it goes by the dongle's name.
+  mouse("HyperPolling Wireless Dongle", 0x1f, { wireless: [0x00b3] }),
   mouse("Viper V3 Pro", 0x1f, { wired: [0x00c0], wireless: [0x00c1] }),
   mouse("Viper V3 Pro SE", 0x1f, { wired: [0x00de], wireless: [0x00df] }),
   mouse("Viper V3 HyperSpeed", 0x1f, { wireless: [0x00b8] }, AA),
