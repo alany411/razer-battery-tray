@@ -81,7 +81,8 @@ export function createBatteryPoller(
   options: PollOptions = {},
 ): () => Promise<PollRound> {
   const memory: RoundMemory = { devices: new Map(), lastModels: [] };
-  return () => pollRound(transport, options, memory);
+  const guarded = guard(transport);
+  return () => pollRound(guarded, options, memory);
 }
 
 /** Polls one model, whether or not it is connected. */
@@ -90,7 +91,7 @@ export function pollDevice(
   model: DeviceModel,
   options: PollOptions = {},
 ): Promise<PollResult> {
-  return poll(transport, model, timing(options), {});
+  return poll(guard(transport), model, timing(options), {});
 }
 
 interface PollMemory {
@@ -121,7 +122,7 @@ function timing({
 }
 
 async function pollRound(
-  transport: HidTransport,
+  transport: GuardedTransport,
   options: PollOptions,
   memory: RoundMemory,
 ): Promise<PollRound> {
@@ -173,14 +174,14 @@ function connectedModels(interfaces: HidDeviceInfo[]): DeviceModel[] {
 }
 
 async function poll(
-  transport: HidTransport,
+  guarded: GuardedTransport,
   model: DeviceModel,
   { sleep, timeoutMs, deadline, now }: Timing,
   memory: PollMemory,
 ): Promise<PollResult> {
   const remaining = () => Math.max(0, deadline - now());
   // A stuck device or dongle (or another app holding it) must not stall polling forever.
-  transport = withTimeouts(transport, () => Math.min(timeoutMs, remaining()));
+  const transport = withTimeouts(guarded, () => Math.min(timeoutMs, remaining()));
   // Waits count against the deadline too.
   const wait = (ms: number) => sleep(Math.min(ms, remaining()));
   const linkOf = (i: HidDeviceInfo) => {
@@ -223,7 +224,11 @@ async function poll(
     // Asleep needs the dongle to be present now, not just on an earlier attempt.
     if (!candidates.some(isWireless)) deviceAsleep = false;
 
-    for (const candidate of candidates) {
+    // An interface still busy with a call that timed out earlier would only stack another one.
+    const ready = candidates.filter((c) => !guarded.busy(c.path));
+    if (ready.length === 0) lastReason = "device is not responding";
+
+    for (const candidate of ready) {
       if (remaining() === 0) {
         lastReason = "poll timed out";
         break attempts;
@@ -283,6 +288,54 @@ async function query(
       ? new DeviceAsleepError(parsed.reason)
       : new Error(parsed.reason);
   return parsed.value;
+}
+
+interface GuardedTransport extends HidTransport {
+  /** Whether a call on this interface is still running, e.g. one that timed out but never returned. */
+  busy(path: string): boolean;
+}
+
+/**
+ * Keeps track of HID calls that are still running. node-hid runs each call on one of a few shared
+ * threads and a timeout does not stop it, so hung calls must not be stacked up: a listing still
+ * running is shared instead of started again, and `busy` tells which interfaces to leave alone.
+ */
+function guard(transport: HidTransport): GuardedTransport {
+  const running = new Map<string, number>();
+  let listing: Promise<HidDeviceInfo[]> | undefined;
+  const track = <T>(path: string, call: Promise<T>): Promise<T> => {
+    running.set(path, (running.get(path) ?? 0) + 1);
+    const done = () => {
+      const left = (running.get(path) ?? 1) - 1;
+      if (left === 0) running.delete(path);
+      else running.set(path, left);
+    };
+    call.then(done, done);
+    return call;
+  };
+  return {
+    busy: (path) => running.has(path),
+    list: () => {
+      if (!listing) {
+        const started = transport.list();
+        listing = started;
+        const done = () => {
+          if (listing === started) listing = undefined;
+        };
+        started.then(done, done);
+      }
+      return listing;
+    },
+    open: async (path) => {
+      const handle = await track(path, transport.open(path));
+      return {
+        sendFeatureReport: (data) => track(path, handle.sendFeatureReport(data)),
+        getFeatureReport: (reportId, length) =>
+          track(path, handle.getFeatureReport(reportId, length)),
+        close: () => track(path, handle.close()),
+      };
+    },
+  };
 }
 
 function withTimeouts(transport: HidTransport, ms: () => number): HidTransport {

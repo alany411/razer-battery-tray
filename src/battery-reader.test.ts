@@ -227,7 +227,7 @@ describe("pollBattery", () => {
 
     expect(await pollBattery(transport, { ...options, timeoutMs: 5 })).toEqual({
       kind: "unavailable",
-      reason: "HID request timed out",
+      reason: "device is not responding",
     });
   });
 
@@ -559,7 +559,7 @@ describe("createBatteryPoller", () => {
       devices: [
         {
           model: DEATHADDER_V3_PRO,
-          result: { kind: "unavailable", reason: "HID request timed out" },
+          result: { kind: "unavailable", reason: "device is not responding" },
         },
         {
           model: model("Viper V3 Pro"),
@@ -567,6 +567,60 @@ describe("createBatteryPoller", () => {
         },
       ],
     });
+  });
+
+  it("does not call an interface again while an earlier call on it still hangs", async () => {
+    const devices = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
+    ]);
+    const transport: HidTransport & { opened: string[] } = {
+      opened: devices.opened,
+      list: devices.list,
+      open: async (path) => {
+        const handle = await devices.open(path);
+        return path === "stuck" ? { ...handle, getFeatureReport: hang } : handle;
+      },
+    };
+    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+
+    await poll();
+    const round = await poll();
+
+    // Each hung call holds a thread, so stacking more on the same interface would starve the rest.
+    expect(transport.opened.filter((path) => path === "stuck")).toEqual(["stuck"]);
+    expect(round).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "unavailable", reason: "device is not responding" },
+        },
+        {
+          model: model("Viper V3 Pro"),
+          result: { kind: "reading", reading: { percent: 100, charging: false } },
+        },
+      ],
+    });
+  });
+
+  it("does not list devices again while an earlier listing still hangs", async () => {
+    let lists = 0;
+    const transport: HidTransport = {
+      list: () => {
+        lists++;
+        return hang();
+      },
+      open: async () => {
+        throw new Error("unreachable");
+      },
+    };
+    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+
+    await poll();
+    await poll();
+
+    expect(lists).toBe(1);
   });
 
   it("reports when no supported device is connected", async () => {
