@@ -47,7 +47,7 @@ export function describeRound(round: PollRound): Map<string, TrayDisplay> {
   );
 }
 
-const STALE_DETAIL = "A stuck HID request keeps the device list from updating";
+const STALE_DETAIL = "A stuck HID request keeps devices from being listed again";
 
 export function describePollResult(name: string, result: PollResult): TrayDisplay {
   switch (result.kind) {

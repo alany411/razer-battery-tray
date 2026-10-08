@@ -92,7 +92,7 @@ describe("describeRound", () => {
     });
 
     expect(displays.get(NAME)?.detail).toBe(
-      "HID is busy · A stuck HID request keeps the device list from updating",
+      "HID is busy · A stuck HID request keeps devices from being listed again",
     );
   });
 
