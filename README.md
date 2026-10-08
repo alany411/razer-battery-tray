@@ -1,16 +1,23 @@
 # razer-battery-tray
 
-A Windows 11 tray app that shows the battery percentage of a Razer DeathAdder V3 Pro, connected through the HyperSpeed dongle or the USB cable.
+A Windows 11 tray app that shows the battery percentage of Razer wireless mice and keyboards, connected through their dongle or the USB cable.
 
-- The tray icon shows the battery percentage as a number, e.g. `87`. The text turns amber at 20% or below and green while charging, and is white or near-black to suit a dark or light taskbar.
-- The tooltip and menu show the model, percentage and charging state, or **Asleep** when the dongle is plugged in but the mouse does not answer (or reports 0% while not charging).
-- A notification appears once when the battery drops to 20% and again at 10%.
-- The battery is read every 60 seconds. **Refresh now** in the menu reads it immediately.
+- Each connected device gets its own tray icon showing its battery percentage as a number, e.g. `87`. The text turns amber at 20% or below and green while charging, and is white or near-black to suit a dark or light taskbar.
+- The tooltip and menu show the model, percentage and charging state, or **Asleep** when the dongle is plugged in but the device does not answer (or reports 0% while not charging).
+- With no supported device connected, a single icon shows **No Razer device found**. A device's icon goes away when it is unplugged.
+- A notification appears once per device when its battery drops to 20% and again at 10%.
+- Batteries are read every 60 seconds. **Refresh now** in any menu reads them all immediately.
 - **Open Synapse** in the menu opens Razer Synapse, the same way as its Start menu shortcut. It is greyed out if Synapse is not installed.
 - **Start with Windows** in the menu launches the app at login.
-- Right-click the tray icon to open the menu. Launching the app again while it runs does nothing, so there is only ever one tray icon.
+- Right-click any tray icon to open its menu. Launching the app again while it runs does nothing, so only one copy of the app runs.
 
-Razer Synapse can occasionally get in the way of reads. The app retries for up to 10 seconds and shows **Unavailable** if it still cannot read the battery.
+Razer Synapse can occasionally get in the way of reads. Once a device is found, the app retries it for up to 10 seconds and shows **Unavailable** if it still cannot read its battery. Finding devices has its own 10-second limit, so a refresh takes at most about 20 seconds.
+
+If a device stops answering while being opened, node-hid holds up every later open and device listing until it does. Devices already open keep updating, and their menus say devices cannot be listed again; newly connected devices appear once the stuck request clears.
+
+## Supported devices
+
+Razer wireless mice and keyboards whose battery OpenRazer reads, from the DeathAdder, Viper, Basilisk, Cobra, Naga, Pro Click, Orochi, Lancehead and Mamba mice to the BlackWidow, DeathStalker and Joro keyboards. The full list, with product IDs, is in `src/device-table.ts`. Headsets are not supported (see `docs/adr/0001-device-table-and-scope.md`).
 
 ## Development
 

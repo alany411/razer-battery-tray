@@ -5,7 +5,7 @@ import { createBatteryPoller } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
 import { LowBatteryAlerts } from "./low-battery-alerts.js";
 import { nodeHidTransport } from "./node-hid-transport.js";
-import { MOUSE_NAME, describeLowBattery, describePollResult } from "./tray-display.js";
+import { READING_DISPLAYS, describeLowBattery, describeRound } from "./tray-display.js";
 import type { TrayDisplay } from "./tray-display.js";
 import { rerunQueue } from "./rerun-queue.js";
 import { readStartsAtLogin } from "./startup-entry.js";
@@ -19,15 +19,12 @@ const POLL_INTERVAL_MS = 60_000;
 // Icon sizes for 100%, 150% and 200% display scaling.
 const ICON_SCALES = [1, 1.5, 2] as const;
 
-const alerts = new LowBatteryAlerts();
+// Keyed by model name, like the displays.
+const alerts = new Map<string, LowBatteryAlerts>();
 const pollBattery = createBatteryPoller(nodeHidTransport);
-let tray: Tray | undefined;
+const trays = new Map<string, Tray>();
 let taskbar: Taskbar = "dark";
-let display: TrayDisplay = {
-  tooltip: `${MOUSE_NAME} — Reading battery…`,
-  iconText: "-",
-  tone: "inactive",
-};
+let displays: ReadonlyMap<string, TrayDisplay> = READING_DISPLAYS;
 
 if (app.requestSingleInstanceLock()) {
   app.setAppUserModelId(APP_ID);
@@ -37,14 +34,7 @@ if (app.requestSingleInstanceLock()) {
 }
 
 function start(): void {
-  tray = new Tray(trayIcon(display));
-  tray.setToolTip(display.tooltip);
-  // Build the menu as it opens, so the Start with Windows checkbox is never stale.
-  tray.on("right-click", () => {
-    void Promise.all([readStartsAtLogin(APP_ID), findSynapse()]).then(([startsAtLogin, synapse]) =>
-      tray?.popUpContextMenu(menu(startsAtLogin, synapse)),
-    );
-  });
+  show(displays);
 
   // Redraw in the taskbar's colours when Windows switches between light and dark.
   nativeTheme.on("updated", () => void followTaskbar());
@@ -58,26 +48,64 @@ async function followTaskbar(): Promise<void> {
   const next = await readTaskbar();
   if (next === taskbar) return;
   taskbar = next;
-  show(display);
+  show(displays);
 }
 
 // Refresh now during a poll queues another poll instead of being dropped.
 const poll = rerunQueue(async () => {
-  const result = await pollBattery();
+  const round = await pollBattery();
   // Also catches theme changes Electron does not report.
   taskbar = await readTaskbar();
-  if (result.kind === "unavailable") console.warn(`Battery unavailable: ${result.reason}`);
-  show(describePollResult(result));
-  if (result.kind === "reading") notifyIfLow(result.reading);
+  if (round.kind === "none" && round.reason) console.warn(`No device listed: ${round.reason}`);
+  for (const { model, result } of round.kind === "devices" ? round.devices : []) {
+    if (result.kind === "unavailable") {
+      console.warn(`${model.name} battery unavailable: ${result.reason}`);
+    }
+    if (result.kind === "reading") notifyIfLow(model.name, result.reading);
+  }
+  show(describeRound(round));
 });
 
-function show(next: TrayDisplay): void {
-  display = next;
-  tray?.setImage(trayIcon(display));
-  tray?.setToolTip(display.tooltip);
+/** Gives each display its own tray icon, removing icons for devices no longer listed. */
+function show(next: ReadonlyMap<string, TrayDisplay>): void {
+  displays = next;
+  for (const [key, tray] of trays) {
+    if (next.has(key)) continue;
+    tray.destroy();
+    trays.delete(key);
+  }
+  for (const [key, display] of next) {
+    let tray = trays.get(key);
+    if (tray) {
+      tray.setImage(trayIcon(display));
+    } else {
+      tray = new Tray(trayIcon(display));
+      onRightClick(tray, key);
+      trays.set(key, tray);
+    }
+    tray.setToolTip(display.tooltip);
+  }
 }
 
-function menu(startsAtLogin: boolean, synapse: SynapseLauncher | undefined): Menu {
+function onRightClick(tray: Tray, key: string): void {
+  // Build the menu as it opens, so the Start with Windows checkbox is never stale.
+  tray.on("right-click", () => {
+    void Promise.all([readStartsAtLogin(APP_ID), findSynapse()]).then(
+      ([startsAtLogin, synapse]) => {
+        const display = displays.get(key);
+        if (display && !tray.isDestroyed()) {
+          tray.popUpContextMenu(menu(display, startsAtLogin, synapse));
+        }
+      },
+    );
+  });
+}
+
+function menu(
+  display: TrayDisplay,
+  startsAtLogin: boolean,
+  synapse: SynapseLauncher | undefined,
+): Menu {
   return Menu.buildFromTemplate([
     { label: display.tooltip, enabled: false },
     ...(display.detail ? [{ label: display.detail, enabled: false }] : []),
@@ -110,10 +138,12 @@ function trayIcon({ iconText, tone }: TrayDisplay): NativeImage {
   return image;
 }
 
-function notifyIfLow(reading: BatteryReading): void {
-  const thresholds = alerts.update(reading);
+function notifyIfLow(name: string, reading: BatteryReading): void {
+  let deviceAlerts = alerts.get(name);
+  if (!deviceAlerts) alerts.set(name, (deviceAlerts = new LowBatteryAlerts()));
+  const thresholds = deviceAlerts.update(reading);
   if (!Notification.isSupported()) return;
   for (const threshold of thresholds) {
-    new Notification(describeLowBattery(threshold, reading)).show();
+    new Notification(describeLowBattery(name, threshold, reading)).show();
   }
 }
