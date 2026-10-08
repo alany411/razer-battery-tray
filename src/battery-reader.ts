@@ -183,7 +183,7 @@ async function query(
   sleep: (ms: number) => Promise<void>,
 ): Promise<number> {
   const report = new Uint8Array(REPORT_LENGTH + 1);
-  report.set(buildRequest(command), 1);
+  report.set(buildRequest(command, 0x1f), 1);
   await handle.sendFeatureReport(report);
   await sleep(RESPONSE_DELAY_MS);
   const parsed = parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));

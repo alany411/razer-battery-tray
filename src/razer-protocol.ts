@@ -13,7 +13,6 @@
 
 export const REPORT_LENGTH = 90;
 
-const TRANSACTION_ID = 0x1f;
 const STATUS_SUCCESS = 0x02;
 // The statuses a dongle sends back when the mouse it relays to does not respond.
 const STATUS_FAILURE = 0x03;
@@ -41,9 +40,10 @@ export type ParsedResponse =
   | { ok: true; value: number }
   | { ok: false; reason: string; mouseDidNotAnswer: boolean };
 
-export function buildRequest(command: Command): Uint8Array {
+/** `transactionId` depends on the model and connection (0x1F on most current devices). */
+export function buildRequest(command: Command, transactionId: number): Uint8Array {
   const report = new Uint8Array(REPORT_LENGTH);
-  report[1] = TRANSACTION_ID;
+  report[1] = transactionId;
   report[5] = command.dataSize;
   report[6] = command.commandClass;
   report[7] = command.commandId;

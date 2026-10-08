@@ -16,7 +16,7 @@ function responseFor(request: Uint8Array, status: number, value: number): Uint8A
 
 describe("buildRequest", () => {
   it("builds the 90-byte battery level request", () => {
-    const report = buildRequest(BATTERY_LEVEL);
+    const report = buildRequest(BATTERY_LEVEL, 0x1f);
 
     expect(report).toHaveLength(REPORT_LENGTH);
     expect(Array.from(report.subarray(0, 8))).toEqual([
@@ -27,8 +27,12 @@ describe("buildRequest", () => {
     expect(report[89]).toBe(0x00);
   });
 
+  it("uses the given transaction ID", () => {
+    expect(buildRequest(BATTERY_LEVEL, 0x9f)[1]).toBe(0x9f);
+  });
+
   it("builds the charging status request", () => {
-    const report = buildRequest(CHARGING_STATUS);
+    const report = buildRequest(CHARGING_STATUS, 0x1f);
 
     expect(report[7]).toBe(0x84);
     expect(report[88]).toBe(0x02 ^ 0x07 ^ 0x84);
@@ -37,7 +41,7 @@ describe("buildRequest", () => {
 
 describe("parseResponse", () => {
   it("returns the value byte of a successful response", () => {
-    const request = buildRequest(BATTERY_LEVEL);
+    const request = buildRequest(BATTERY_LEVEL, 0x1f);
 
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, 0x02, 200))).toEqual({
       ok: true,
@@ -46,7 +50,7 @@ describe("parseResponse", () => {
   });
 
   it("strips a leading report ID byte", () => {
-    const request = buildRequest(BATTERY_LEVEL);
+    const request = buildRequest(BATTERY_LEVEL, 0x1f);
     const withReportId = new Uint8Array(REPORT_LENGTH + 1);
     withReportId.set(responseFor(request, 0x02, 77), 1);
 
@@ -54,7 +58,7 @@ describe("parseResponse", () => {
   });
 
   it("reports the status when the mouse did not answer", () => {
-    const request = buildRequest(BATTERY_LEVEL);
+    const request = buildRequest(BATTERY_LEVEL, 0x1f);
 
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, 0x04, 0))).toEqual({
       ok: false,
@@ -64,7 +68,7 @@ describe("parseResponse", () => {
   });
 
   it.each([0x03, 0x04])("marks status %i as the mouse not answering", (status) => {
-    const request = buildRequest(BATTERY_LEVEL);
+    const request = buildRequest(BATTERY_LEVEL, 0x1f);
 
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, status, 0))).toMatchObject({
       ok: false,
@@ -73,7 +77,7 @@ describe("parseResponse", () => {
   });
 
   it.each([0x01, 0x05])("does not treat status %s as the mouse not answering", (status) => {
-    const request = buildRequest(BATTERY_LEVEL);
+    const request = buildRequest(BATTERY_LEVEL, 0x1f);
 
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, status, 0))).toMatchObject({
       ok: false,
@@ -82,7 +86,7 @@ describe("parseResponse", () => {
   });
 
   it("rejects a response to a different command", () => {
-    const request = buildRequest(CHARGING_STATUS);
+    const request = buildRequest(CHARGING_STATUS, 0x1f);
 
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, 0x02, 1))).toEqual({
       ok: false,
