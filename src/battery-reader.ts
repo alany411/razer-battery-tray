@@ -26,7 +26,7 @@ export interface DevicePoll {
   result: PollResult;
 }
 
-/** One poll of every connected device. `reason` says why listing devices failed, if it did. */
+/** A poll of each connected device. `reason` says why listing devices failed, if it did. */
 export type PollRound =
   | { kind: "devices"; devices: DevicePoll[] }
   | { kind: "none"; reason?: string };
@@ -54,8 +54,8 @@ export interface PollOptions {
   /** How long a single HID call may take before it counts as failed. */
   timeoutMs?: number;
   /**
-   * How long a whole poll, retries included, may take. Finding the devices gets this limit, and
-   * then each device's poll gets it again.
+   * How long one device's poll, retries included, may take. Finding the devices before that has
+   * a limit of the same length, so a round takes at most twice this.
    */
   deadlineMs?: number;
   now?: () => number;
@@ -66,7 +66,7 @@ const RETRY_DELAY_MS = 500;
 /** Time the device (or the dongle relaying to it) needs between a request and its response. */
 const RESPONSE_DELAY_MS = 50;
 const HID_TIMEOUT_MS = 2_000;
-// Keeps Refresh now responsive even when every interface is stuck.
+// Keeps Refresh now responsive (at most twice this per round) even when every interface is stuck.
 const POLL_DEADLINE_MS = 10_000;
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

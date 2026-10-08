@@ -9,9 +9,9 @@ A Windows 11 tray app that shows the battery percentage of Razer wireless mice a
 - Batteries are read every 60 seconds. **Refresh now** in any menu reads them all immediately.
 - **Open Synapse** in the menu opens Razer Synapse, the same way as its Start menu shortcut. It is greyed out if Synapse is not installed.
 - **Start with Windows** in the menu launches the app at login.
-- Right-click the tray icon to open the menu. Launching the app again while it runs does nothing, so there is only ever one tray icon.
+- Right-click any tray icon to open its menu. Launching the app again while it runs does nothing, so only one copy of the app runs.
 
-Razer Synapse can occasionally get in the way of reads. The app retries for up to 10 seconds and shows **Unavailable** if it still cannot read a device's battery.
+Razer Synapse can occasionally get in the way of reads. Once a device is found, the app retries it for up to 10 seconds and shows **Unavailable** if it still cannot read its battery. Finding devices has its own 10-second limit, so a refresh takes at most about 20 seconds.
 
 ## Supported devices
 

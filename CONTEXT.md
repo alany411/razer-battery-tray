@@ -28,5 +28,5 @@ The dongle is present but the device does not answer a battery request, or answe
 _Avoid_: Disconnected, offline
 
 **Unavailable**:
-No reading could be taken after all retries or within the poll's 10-second limit (requests kept failing, or the poll ran out of time). With no device found at all, the app shows a single **No Razer device found** icon that looks like Unavailable.
+No reading could be taken after all retries or within the poll's 10-second limit (requests kept failing, or the poll ran out of time). With no device found at all, the app shows a single **No Razer device found** icon that looks like Unavailable. If listing devices fails, the devices found last time stay and show Unavailable.
 _Avoid_: Error state
