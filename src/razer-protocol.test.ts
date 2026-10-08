@@ -57,31 +57,31 @@ describe("parseResponse", () => {
     expect(parseResponse(BATTERY_LEVEL, withReportId)).toEqual({ ok: true, value: 77 });
   });
 
-  it("reports the status when the mouse did not answer", () => {
+  it("reports the status when the device did not answer", () => {
     const request = buildRequest(BATTERY_LEVEL, 0x1f);
 
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, 0x04, 0))).toEqual({
       ok: false,
       reason: "status 0x04",
-      mouseDidNotAnswer: true,
+      deviceDidNotAnswer: true,
     });
   });
 
-  it.each([0x03, 0x04])("marks status %i as the mouse not answering", (status) => {
+  it.each([0x03, 0x04])("marks status %i as the device not answering", (status) => {
     const request = buildRequest(BATTERY_LEVEL, 0x1f);
 
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, status, 0))).toMatchObject({
       ok: false,
-      mouseDidNotAnswer: true,
+      deviceDidNotAnswer: true,
     });
   });
 
-  it.each([0x01, 0x05])("does not treat status %s as the mouse not answering", (status) => {
+  it.each([0x01, 0x05])("does not treat status %s as the device not answering", (status) => {
     const request = buildRequest(BATTERY_LEVEL, 0x1f);
 
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, status, 0))).toMatchObject({
       ok: false,
-      mouseDidNotAnswer: false,
+      deviceDidNotAnswer: false,
     });
   });
 
@@ -91,7 +91,7 @@ describe("parseResponse", () => {
     expect(parseResponse(BATTERY_LEVEL, responseFor(request, 0x02, 1))).toEqual({
       ok: false,
       reason: "mismatched command",
-      mouseDidNotAnswer: false,
+      deviceDidNotAnswer: false,
     });
   });
 
@@ -99,7 +99,7 @@ describe("parseResponse", () => {
     expect(parseResponse(BATTERY_LEVEL, new Uint8Array(10))).toEqual({
       ok: false,
       reason: "unexpected length 10",
-      mouseDidNotAnswer: false,
+      deviceDidNotAnswer: false,
     });
   });
 });

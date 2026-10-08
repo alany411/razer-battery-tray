@@ -1,3 +1,5 @@
+import { findConnection } from "./device-table.js";
+import type { DeviceModel } from "./device-table.js";
 import {
   BATTERY_LEVEL,
   CHARGING_STATUS,
@@ -8,16 +10,6 @@ import {
 import type { Command } from "./razer-protocol.js";
 
 export const RAZER_VENDOR_ID = 0x1532;
-export const WIRED_PRODUCT_ID = 0x00b6;
-export const DONGLE_PRODUCT_ID = 0x00b7;
-// The DeathAdder V3 Pro sold with the HyperPolling dongle uses different IDs (OpenRazer's *_ALT).
-const HYPERPOLLING_WIRED_PRODUCT_ID = 0x00c2;
-const HYPERPOLLING_DONGLE_PRODUCT_ID = 0x00c3;
-
-const isWired = (i: HidDeviceInfo) =>
-  i.productId === WIRED_PRODUCT_ID || i.productId === HYPERPOLLING_WIRED_PRODUCT_ID;
-const isDongle = (i: HidDeviceInfo) =>
-  i.productId === DONGLE_PRODUCT_ID || i.productId === HYPERPOLLING_DONGLE_PRODUCT_ID;
 
 export interface BatteryReading {
   percent: number;
@@ -28,6 +20,16 @@ export type PollResult =
   | { kind: "reading"; reading: BatteryReading }
   | { kind: "asleep" }
   | { kind: "unavailable"; reason: string };
+
+export interface DevicePoll {
+  model: DeviceModel;
+  result: PollResult;
+}
+
+/** One poll of every connected device. `reason` says why listing devices failed, if it did. */
+export type PollRound =
+  | { kind: "devices"; devices: DevicePoll[] }
+  | { kind: "none"; reason?: string };
 
 export interface HidDeviceInfo {
   productId: number;
@@ -51,14 +53,14 @@ export interface PollOptions {
   sleep?: (ms: number) => Promise<void>;
   /** How long a single HID call may take before it counts as failed. */
   timeoutMs?: number;
-  /** How long a whole poll, retries included, may take. */
+  /** How long a whole poll, retries included, may take. Each device gets the whole limit. */
   deadlineMs?: number;
   now?: () => number;
 }
 
 const RETRIES = 3;
 const RETRY_DELAY_MS = 500;
-/** Time the mouse (or the dongle relaying to it) needs between a request and its response. */
+/** Time the device (or the dongle relaying to it) needs between a request and its response. */
 const RESPONSE_DELAY_MS = 50;
 const HID_TIMEOUT_MS = 2_000;
 // Keeps Refresh now responsive even when every interface is stuck.
@@ -67,47 +69,110 @@ const POLL_DEADLINE_MS = 10_000;
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
- * Returns a poll function that remembers which HID interface last gave a battery reading and
- * tries it first, so interfaces that stall cannot use up the poll's time limit.
+ * Returns a function that polls every connected device in the device table at once. For each
+ * device it remembers which HID interface last gave a battery reading and tries it first, so
+ * interfaces that stall cannot use up the poll's time limit.
  */
 export function createBatteryPoller(
   transport: HidTransport,
   options: PollOptions = {},
-): () => Promise<PollResult> {
-  const memory: PollMemory = {};
-  return () => poll(transport, options, memory);
+): () => Promise<PollRound> {
+  const memory = new Map<string, PollMemory>();
+  return () => pollRound(transport, options, memory);
 }
 
-export function pollBattery(
+/** Polls one model, whether or not it is connected. */
+export function pollDevice(
   transport: HidTransport,
+  model: DeviceModel,
   options: PollOptions = {},
 ): Promise<PollResult> {
-  return poll(transport, options, {});
+  return poll(transport, model, timing(options), {});
 }
 
 interface PollMemory {
   lastPath?: string;
 }
 
+interface Timing {
+  timeoutMs: number;
+  deadline: number;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+}
+
+function timing({
+  sleep = defaultSleep,
+  timeoutMs = HID_TIMEOUT_MS,
+  deadlineMs = POLL_DEADLINE_MS,
+  now = Date.now,
+}: PollOptions): Timing {
+  return { sleep, timeoutMs, deadline: now() + deadlineMs, now };
+}
+
+async function pollRound(
+  transport: HidTransport,
+  options: PollOptions,
+  memory: Map<string, PollMemory>,
+): Promise<PollRound> {
+  // Every device shares one deadline, so a round takes no longer than a single poll.
+  const time = timing(options);
+  const remaining = () => Math.max(0, time.deadline - time.now());
+  const timed = withTimeouts(transport, () => Math.min(time.timeoutMs, remaining()));
+
+  let models: DeviceModel[] = [];
+  let reason: string | undefined;
+  for (let attempt = 0; attempt <= RETRIES && models.length === 0; attempt++) {
+    if (attempt > 0) await time.sleep(Math.min(RETRY_DELAY_MS, remaining()));
+    if (remaining() === 0) {
+      reason = "poll timed out";
+      break;
+    }
+    try {
+      models = connectedModels(await timed.list());
+      reason = undefined;
+    } catch (error) {
+      reason = errorMessage(error);
+    }
+  }
+  if (models.length === 0) return reason ? { kind: "none", reason } : { kind: "none" };
+
+  // Polled side by side, so a device that stalls cannot hold up the others.
+  const devices = await Promise.all(
+    models.map(async (model) => {
+      let modelMemory = memory.get(model.name);
+      if (!modelMemory) memory.set(model.name, (modelMemory = {}));
+      return { model, result: await poll(transport, model, time, modelMemory) };
+    }),
+  );
+  return { kind: "devices", devices };
+}
+
+/** The table models with at least one interface present, in the order first seen. */
+function connectedModels(interfaces: HidDeviceInfo[]): DeviceModel[] {
+  return [...new Set(interfaces.flatMap((i) => findConnection(i.productId)?.model ?? []))];
+}
+
 async function poll(
   transport: HidTransport,
-  {
-    sleep = defaultSleep,
-    timeoutMs = HID_TIMEOUT_MS,
-    deadlineMs = POLL_DEADLINE_MS,
-    now = Date.now,
-  }: PollOptions,
+  model: DeviceModel,
+  { sleep, timeoutMs, deadline, now }: Timing,
   memory: PollMemory,
 ): Promise<PollResult> {
-  const deadline = now() + deadlineMs;
   const remaining = () => Math.max(0, deadline - now());
-  // A stuck mouse or dongle (or another app holding it) must not stall polling forever.
+  // A stuck device or dongle (or another app holding it) must not stall polling forever.
   transport = withTimeouts(transport, () => Math.min(timeoutMs, remaining()));
   // Waits count against the deadline too.
   const wait = (ms: number) => sleep(Math.min(ms, remaining()));
+  const linkOf = (i: HidDeviceInfo) => {
+    const found = findConnection(i.productId);
+    return found?.model === model ? found.link : undefined;
+  };
+  const isWired = (i: HidDeviceInfo) => linkOf(i) === "wired";
+  const isWireless = (i: HidDeviceInfo) => linkOf(i) === "wireless";
 
   let lastReason = "";
-  let mouseAsleep = false;
+  let deviceAsleep = false;
   let wired = false;
   attempts: for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt > 0) await wait(RETRY_DELAY_MS);
@@ -126,18 +191,18 @@ async function poll(
     }
     // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
     // Then the interface that answered last time.
-    const candidates = [...interfaces.filter(isWired), ...interfaces.filter(isDongle)].toSorted(
+    const candidates = [...interfaces.filter(isWired), ...interfaces.filter(isWireless)].toSorted(
       (a, b) => Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath),
     );
     if (candidates.length === 0) {
-      lastReason = "mouse not found";
-      mouseAsleep = false;
+      lastReason = "device not found";
+      deviceAsleep = false;
       continue;
     }
     // Like Asleep, the cable counts only if it is still connected on the latest attempt.
     wired = candidates.some(isWired);
     // Asleep needs the dongle to be present now, not just on an earlier attempt.
-    if (!candidates.some(isDongle)) mouseAsleep = false;
+    if (!candidates.some(isWireless)) deviceAsleep = false;
 
     for (const candidate of candidates) {
       if (remaining() === 0) {
@@ -145,31 +210,37 @@ async function poll(
         break attempts;
       }
       try {
-        const reading = await readFrom(transport, candidate, wait);
+        const reading = await readFrom(transport, model, candidate, wait);
         memory.lastPath = candidate.path;
         return { kind: "reading", reading };
       } catch (error) {
         lastReason = errorMessage(error);
-        if (error instanceof MouseAsleepError) mouseAsleep = true;
+        if (error instanceof DeviceAsleepError) deviceAsleep = true;
       }
     }
   }
 
-  return !wired && mouseAsleep ? { kind: "asleep" } : { kind: "unavailable", reason: lastReason };
+  return !wired && deviceAsleep ? { kind: "asleep" } : { kind: "unavailable", reason: lastReason };
 }
 
 async function readFrom(
   transport: HidTransport,
+  model: DeviceModel,
   candidate: HidDeviceInfo,
   sleep: (ms: number) => Promise<void>,
 ): Promise<BatteryReading> {
+  const connection = findConnection(candidate.productId);
+  if (!connection) throw new Error("device not found");
+  const { link, transactionId } = connection;
   const handle = await transport.open(candidate.path);
   try {
-    const batteryByte = await query(handle, BATTERY_LEVEL, sleep);
-    const charging = (await query(handle, CHARGING_STATUS, sleep)) === 1;
-    // A mouse that is truly empty is off, so a 0% reading through the dongle means it is asleep.
-    if (isDongle(candidate) && batteryByte === 0 && !charging) {
-      throw new MouseAsleepError("mouse reported 0%");
+    const batteryByte = await query(handle, BATTERY_LEVEL, transactionId, sleep);
+    // Models on disposable batteries have no charging flag.
+    const charging =
+      model.rechargeable && (await query(handle, CHARGING_STATUS, transactionId, sleep)) === 1;
+    // A device that is truly empty is off, so a 0% reading through the dongle means it is asleep.
+    if (link === "wireless" && batteryByte === 0 && !charging) {
+      throw new DeviceAsleepError("device reported 0%");
     }
     return { percent: Math.round((batteryByte / 255) * 100), charging };
   } finally {
@@ -180,15 +251,18 @@ async function readFrom(
 async function query(
   handle: HidHandle,
   command: Command,
+  transactionId: number,
   sleep: (ms: number) => Promise<void>,
 ): Promise<number> {
   const report = new Uint8Array(REPORT_LENGTH + 1);
-  report.set(buildRequest(command, 0x1f), 1);
+  report.set(buildRequest(command, transactionId), 1);
   await handle.sendFeatureReport(report);
   await sleep(RESPONSE_DELAY_MS);
   const parsed = parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));
   if (!parsed.ok)
-    throw parsed.mouseDidNotAnswer ? new MouseAsleepError(parsed.reason) : new Error(parsed.reason);
+    throw parsed.deviceDidNotAnswer
+      ? new DeviceAsleepError(parsed.reason)
+      : new Error(parsed.reason);
   return parsed.value;
 }
 
@@ -220,8 +294,8 @@ function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
 }
 
-/** The mouse did not answer the request, or answered 0% through the dongle while not charging. */
-class MouseAsleepError extends Error {}
+/** The device did not answer the request, or answered 0% through the dongle while not charging. */
+class DeviceAsleepError extends Error {}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

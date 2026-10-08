@@ -1,17 +1,29 @@
 import { describe, expect, it } from "vitest";
-import {
-  DONGLE_PRODUCT_ID,
-  WIRED_PRODUCT_ID,
-  createBatteryPoller,
-  pollBattery,
-} from "./battery-reader.js";
-import type { HidDeviceInfo, HidHandle, HidTransport } from "./battery-reader.js";
+import { createBatteryPoller, pollDevice } from "./battery-reader.js";
+import type { HidDeviceInfo, HidHandle, HidTransport, PollOptions } from "./battery-reader.js";
+import { DEVICE_TABLE } from "./device-table.js";
+import type { DeviceModel } from "./device-table.js";
 
 type Responder = (request: Uint8Array) => number | "error" | { status: number };
 
 interface FakeDevice extends HidDeviceInfo {
   respond: Responder;
+  /** The transaction ID the device answers to; requests with another one fail. */
+  transactionId?: number;
 }
+
+const model = (name: string): DeviceModel => {
+  const found = DEVICE_TABLE.find((m) => m.name === name);
+  if (!found) throw new Error(`${name} is not in the device table`);
+  return found;
+};
+
+const DEATHADDER_V3_PRO = model("DeathAdder V3 Pro");
+const WIRED_PRODUCT_ID = 0x00b6;
+const DONGLE_PRODUCT_ID = 0x00b7;
+
+const pollBattery = (transport: HidTransport, opts: PollOptions) =>
+  pollDevice(transport, DEATHADDER_V3_PRO, opts);
 
 function fakeTransport(devices: FakeDevice[]): HidTransport & { opened: string[] } {
   const opened: string[] = [];
@@ -28,7 +40,8 @@ function fakeTransport(devices: FakeDevice[]): HidTransport & { opened: string[]
           last = Uint8Array.from(data.subarray(1));
         },
         getFeatureReport: async () => {
-          const answer = device.respond(last);
+          const answer =
+            last[1] === (device.transactionId ?? 0x1f) ? device.respond(last) : "error";
           if (answer === "error") throw new Error("read failed");
           const response = Uint8Array.from(last);
           if (typeof answer === "number") {
@@ -118,7 +131,7 @@ describe("pollBattery", () => {
 
     expect(await pollBattery(transport, options)).toEqual({
       kind: "unavailable",
-      reason: "mouse not found",
+      reason: "device not found",
     });
     expect(transport.opened).toEqual([]);
   });
@@ -348,7 +361,7 @@ describe("pollBattery", () => {
 
     expect(await pollBattery(transport, options)).toEqual({
       kind: "unavailable",
-      reason: "mouse not found",
+      reason: "device not found",
     });
   });
 
@@ -407,6 +420,71 @@ describe("pollBattery", () => {
   });
 });
 
+describe("pollDevice", () => {
+  it("uses the model's transaction ID for each connection", async () => {
+    const blackWidow = model("BlackWidow V3 Pro");
+    const wireless = fakeTransport([
+      { productId: 0x025c, path: "dongle", transactionId: 0x9f, respond: awake(204, false) },
+    ]);
+    const wired = fakeTransport([
+      { productId: 0x025a, path: "wired", transactionId: 0x3f, respond: awake(51, true) },
+    ]);
+
+    expect(await pollDevice(wireless, blackWidow, options)).toEqual({
+      kind: "reading",
+      reading: { percent: 80, charging: false },
+    });
+    expect(await pollDevice(wired, blackWidow, options)).toEqual({
+      kind: "reading",
+      reading: { percent: 20, charging: true },
+    });
+  });
+
+  it("reads an older model with transaction ID 0xFF", async () => {
+    const transport = fakeTransport([
+      { productId: 0x007b, path: "dongle", transactionId: 0xff, respond: awake(255, true) },
+    ]);
+
+    expect(await pollDevice(transport, model("Viper Ultimate"), options)).toEqual({
+      kind: "reading",
+      reading: { percent: 100, charging: true },
+    });
+  });
+
+  it("does not ask a model on disposable batteries whether it is charging", async () => {
+    const requests: number[] = [];
+    const transport = fakeTransport([
+      {
+        productId: 0x0083,
+        path: "dongle",
+        transactionId: 0xff,
+        respond: (request) => {
+          requests.push(request[7] ?? 0);
+          return request[7] === 0x80 ? 128 : "error";
+        },
+      },
+    ]);
+
+    expect(await pollDevice(transport, model("Basilisk X HyperSpeed"), options)).toEqual({
+      kind: "reading",
+      reading: { percent: 50, charging: false },
+    });
+    expect(requests).toEqual([0x80]);
+  });
+
+  it("ignores another model's interfaces", async () => {
+    const transport = fakeTransport([
+      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
+    ]);
+
+    expect(await pollBattery(transport, options)).toEqual({
+      kind: "unavailable",
+      reason: "device not found",
+    });
+    expect(transport.opened).toEqual([]);
+  });
+});
+
 describe("createBatteryPoller", () => {
   it("tries the interface that last answered first", async () => {
     const transport = fakeTransport([
@@ -419,5 +497,118 @@ describe("createBatteryPoller", () => {
     await poll();
 
     expect(transport.opened).toEqual(["stuck", "control", "control"]);
+  });
+
+  it("polls every connected device in the table", async () => {
+    const transport = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "mouse", respond: awake(255, false) },
+      { productId: 0x025c, path: "keyboard", transactionId: 0x9f, respond: awake(51, false) },
+      { productId: 0x1234, path: "other", respond: awake(255, false) },
+    ]);
+
+    expect(await createBatteryPoller(transport, options)()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "reading", reading: { percent: 100, charging: false } },
+        },
+        {
+          model: model("BlackWidow V3 Pro"),
+          result: { kind: "reading", reading: { percent: 20, charging: false } },
+        },
+      ],
+    });
+  });
+
+  it("shows the DeathAdder V3 Pro's cable and dongle as one device", async () => {
+    const transport = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+      { productId: WIRED_PRODUCT_ID, path: "wired", respond: awake(128, true) },
+    ]);
+
+    expect(await createBatteryPoller(transport, options)()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "reading", reading: { percent: 50, charging: true } },
+        },
+      ],
+    });
+    expect(transport.opened).toEqual(["wired"]);
+  });
+
+  it("keeps a device that stalls from making another one unavailable", async () => {
+    let clock = 0;
+    const transport = fakeTransport([
+      {
+        productId: DONGLE_PRODUCT_ID,
+        path: "stuck",
+        respond: () => {
+          clock += 2_000;
+          return "error" as const;
+        },
+      },
+      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
+    ]);
+
+    const round = await createBatteryPoller(transport, {
+      ...options,
+      now: () => clock,
+      deadlineMs: 10_000,
+    })();
+
+    expect(round).toEqual({
+      kind: "devices",
+      devices: [
+        { model: DEATHADDER_V3_PRO, result: { kind: "unavailable", reason: "read failed" } },
+        {
+          model: model("Viper V3 Pro"),
+          result: { kind: "reading", reading: { percent: 100, charging: false } },
+        },
+      ],
+    });
+  });
+
+  it("reports when no supported device is connected", async () => {
+    const transport = fakeTransport([
+      { productId: 0x1234, path: "other", respond: awake(255, false) },
+    ]);
+
+    expect(await createBatteryPoller(transport, options)()).toEqual({ kind: "none" });
+    expect(transport.opened).toEqual([]);
+  });
+
+  it("reports why listing devices failed", async () => {
+    const transport: HidTransport = {
+      list: async () => {
+        throw new Error("hid unavailable");
+      },
+      open: async () => {
+        throw new Error("unreachable");
+      },
+    };
+
+    expect(await createBatteryPoller(transport, options)()).toEqual({
+      kind: "none",
+      reason: "hid unavailable",
+    });
+  });
+
+  it("finds a dongle that shows up late", async () => {
+    let lists = 0;
+    const dongle = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+    ]);
+    const transport: HidTransport = {
+      list: async () => (lists++ === 0 ? [] : dongle.list()),
+      open: dongle.open,
+    };
+
+    expect(await createBatteryPoller(transport, options)()).toMatchObject({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
+    });
   });
 });
