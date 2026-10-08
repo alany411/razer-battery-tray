@@ -224,14 +224,15 @@ async function poll(
     // Asleep needs the dongle to be present now, not just on an earlier attempt.
     if (!candidates.some(isWireless)) deviceAsleep = false;
 
-    // An interface still busy with a call that timed out earlier would only stack another one.
-    const ready = candidates.filter((c) => !guarded.busy(c.path));
-    if (ready.length === 0) lastReason = "device is not responding";
-
-    for (const candidate of ready) {
+    for (const candidate of candidates) {
       if (remaining() === 0) {
         lastReason = "poll timed out";
         break attempts;
+      }
+      // A call that timed out earlier is still running, so another would only hold another thread.
+      if (candidates.some((c) => guarded.busy(c.path))) {
+        lastReason = "device is not responding";
+        break;
       }
       try {
         const reading = await readFrom(transport, model, candidate, wait);
@@ -267,8 +268,10 @@ async function readFrom(
       throw new DeviceAsleepError("device reported 0%");
     }
     return { percent: Math.round((batteryByte / 255) * 100), charging };
-  } finally {
+  } catch (error) {
+    // The handle stays open for the next poll unless something went wrong with it.
     await handle.close().catch(() => {});
+    throw error;
   }
 }
 
@@ -296,46 +299,78 @@ interface GuardedTransport extends HidTransport {
 }
 
 /**
- * Keeps track of HID calls that are still running. node-hid runs each call on one of a few shared
- * threads and a timeout does not stop it, so hung calls must not be stacked up: a listing still
- * running is shared instead of started again, and `busy` tells which interfaces to leave alone.
+ * Keeps hung HID calls from piling up. node-hid runs each call on one of a few shared threads, and
+ * a timeout does not stop it. It also opens and lists one at a time for the whole app, so a hung
+ * open or listing holds up every later one. So this keeps handles open between polls, gives the
+ * last listing while an open or listing is still running, and `busy` tells which interfaces to
+ * leave alone.
  */
 function guard(transport: HidTransport): GuardedTransport {
   const running = new Map<string, number>();
+  const handles = new Map<string, HidHandle>();
+  // Opens and listings still running, which hold up any new one.
+  let queued = 0;
   let listing: Promise<HidDeviceInfo[]> | undefined;
+  let lastListed: HidDeviceInfo[] | undefined;
+
   const track = <T>(path: string, call: Promise<T>): Promise<T> => {
     running.set(path, (running.get(path) ?? 0) + 1);
-    const done = () => {
+    settled(call, () => {
       const left = (running.get(path) ?? 1) - 1;
       if (left === 0) running.delete(path);
       else running.set(path, left);
-    };
-    call.then(done, done);
+    });
     return call;
   };
+  const inQueue = <T>(call: Promise<T>): Promise<T> => {
+    queued++;
+    settled(call, () => queued--);
+    return call;
+  };
+
   return {
     busy: (path) => running.has(path),
     list: () => {
-      if (!listing) {
-        const started = transport.list();
-        listing = started;
-        const done = () => {
-          if (listing === started) listing = undefined;
-        };
-        started.then(done, done);
-      }
-      return listing;
+      if (lastListed && queued > 0) return Promise.resolve(lastListed);
+      if (listing) return listing;
+      const started = inQueue(transport.list());
+      listing = started;
+      started.then(
+        (listed) => {
+          listing = undefined;
+          lastListed = listed;
+          // Let go of interfaces that are gone, e.g. an unplugged dongle.
+          for (const [path, handle] of handles) {
+            if (!listed.some((i) => i.path === path)) void handle.close().catch(() => {});
+          }
+        },
+        () => {
+          listing = undefined;
+        },
+      );
+      return started;
     },
     open: async (path) => {
-      const handle = await track(path, transport.open(path));
-      return {
-        sendFeatureReport: (data) => track(path, handle.sendFeatureReport(data)),
-        getFeatureReport: (reportId, length) =>
-          track(path, handle.getFeatureReport(reportId, length)),
-        close: () => track(path, handle.close()),
+      const open = handles.get(path);
+      if (open) return open;
+      const raw = await track(path, inQueue(transport.open(path)));
+      const handle: HidHandle = {
+        sendFeatureReport: (data) => track(path, raw.sendFeatureReport(data)),
+        getFeatureReport: (reportId, length) => track(path, raw.getFeatureReport(reportId, length)),
+        close: () => {
+          if (handles.get(path) === handle) handles.delete(path);
+          return track(path, raw.close());
+        },
       };
+      handles.set(path, handle);
+      return handle;
     },
   };
+}
+
+/** Runs `done` once `call` settles, either way. */
+function settled(call: Promise<unknown>, done: () => void): void {
+  void call.then(done, done);
 }
 
 function withTimeouts(transport: HidTransport, ms: () => number): HidTransport {

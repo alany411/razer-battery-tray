@@ -496,7 +496,8 @@ describe("createBatteryPoller", () => {
     await poll();
     await poll();
 
-    expect(transport.opened).toEqual(["stuck", "control", "control"]);
+    // The interface that answered stays open for the next poll.
+    expect(transport.opened).toEqual(["stuck", "control"]);
   });
 
   it("polls every connected device in the table", async () => {
@@ -602,6 +603,64 @@ describe("createBatteryPoller", () => {
         },
       ],
     });
+  });
+
+  it("stops calling a device once any of its interfaces has a hung call", async () => {
+    const devices = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "first", respond: awake(255, false) },
+      { productId: DONGLE_PRODUCT_ID, path: "second", respond: awake(255, false) },
+    ]);
+    const transport: HidTransport & { opened: string[] } = {
+      opened: devices.opened,
+      list: devices.list,
+      open: async (path) => ({ ...(await devices.open(path)), getFeatureReport: hang }),
+    };
+    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+
+    await poll();
+    await poll();
+
+    // Each hung call holds one of node-hid's few threads, so a device may hold only one.
+    expect(transport.opened).toEqual(["first"]);
+  });
+
+  it("keeps reading open devices while another device's open hangs", async () => {
+    // node-hid opens and lists one at a time, so a hung open holds up every later open and list.
+    let hungOpen = false;
+    let listed: FakeDevice[] = [{ productId: 0x00c1, path: "viper", respond: awake(255, false) }];
+    const devices = fakeTransport([
+      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+    ]);
+    const transport: HidTransport = {
+      list: () => (hungOpen ? hang() : Promise.resolve(listed)),
+      open: (path) => {
+        if (hungOpen) return hang();
+        if (path === "stuck") {
+          hungOpen = true;
+          return hang();
+        }
+        return devices.open(path);
+      },
+    };
+    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+
+    await poll();
+    listed = [
+      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+    ];
+    const rounds = [await poll(), await poll()];
+
+    for (const round of rounds) {
+      expect(round).toMatchObject({
+        kind: "devices",
+        devices: [
+          { model: model("Viper V3 Pro"), result: { kind: "reading" } },
+          { model: DEATHADDER_V3_PRO, result: { kind: "unavailable" } },
+        ],
+      });
+    }
   });
 
   it("does not list devices again while an earlier listing still hangs", async () => {
