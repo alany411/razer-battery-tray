@@ -5,7 +5,7 @@ export type Link = "wired" | "wireless";
 
 export interface Connection {
   productId: number;
-  /** `wireless` covers the dongle, a dock and Bluetooth. */
+  /** `wireless` covers the dongle (on older models, the charging dock that relays like one) and Bluetooth. */
   link: Link;
   transactionId: number;
 }
