@@ -13,6 +13,8 @@ A Windows 11 tray app that shows the battery percentage of Razer wireless mice a
 
 Razer Synapse can occasionally get in the way of reads. Once a device is found, the app retries it for up to 10 seconds and shows **Unavailable** if it still cannot read its battery. Finding devices has its own 10-second limit, so a refresh takes at most about 20 seconds.
 
+If a device stops answering while being opened, node-hid holds up every later open and device listing until it does. Devices already open keep updating, and their menus say devices cannot be listed again; newly connected devices appear once the stuck request clears.
+
 ## Supported devices
 
 Razer wireless mice and keyboards whose battery OpenRazer reads, from the DeathAdder, Viper, Basilisk, Cobra, Naga, Pro Click, Orochi, Lancehead and Mamba mice to the BlackWidow, DeathStalker and Joro keyboards. The full list, with product IDs, is in `src/device-table.ts`. Headsets are not supported (see `docs/adr/0001-device-table-and-scope.md`).
