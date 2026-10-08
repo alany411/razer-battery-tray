@@ -53,7 +53,10 @@ export interface PollOptions {
   sleep?: (ms: number) => Promise<void>;
   /** How long a single HID call may take before it counts as failed. */
   timeoutMs?: number;
-  /** How long a whole poll, retries included, may take. Each device gets the whole limit. */
+  /**
+   * How long a whole poll, retries included, may take. Finding the devices gets this limit, and
+   * then each device's poll gets it again.
+   */
   deadlineMs?: number;
   now?: () => number;
 }
@@ -77,7 +80,7 @@ export function createBatteryPoller(
   transport: HidTransport,
   options: PollOptions = {},
 ): () => Promise<PollRound> {
-  const memory = new Map<string, PollMemory>();
+  const memory: RoundMemory = { devices: new Map(), lastModels: [] };
   return () => pollRound(transport, options, memory);
 }
 
@@ -92,6 +95,13 @@ export function pollDevice(
 
 interface PollMemory {
   lastPath?: string;
+}
+
+interface RoundMemory {
+  /** Keyed by model name. */
+  devices: Map<string, PollMemory>;
+  /** The models found by the last listing that worked. */
+  lastModels: DeviceModel[];
 }
 
 interface Timing {
@@ -113,15 +123,15 @@ function timing({
 async function pollRound(
   transport: HidTransport,
   options: PollOptions,
-  memory: Map<string, PollMemory>,
+  memory: RoundMemory,
 ): Promise<PollRound> {
-  // Every device shares one deadline, so a round takes no longer than a single poll.
   const time = timing(options);
   const remaining = () => Math.max(0, time.deadline - time.now());
   const timed = withTimeouts(transport, () => Math.min(time.timeoutMs, remaining()));
 
   let models: DeviceModel[] = [];
   let reason: string | undefined;
+  let listed = false;
   for (let attempt = 0; attempt <= RETRIES && models.length === 0; attempt++) {
     if (attempt > 0) await time.sleep(Math.min(RETRY_DELAY_MS, remaining()));
     if (remaining() === 0) {
@@ -130,19 +140,28 @@ async function pollRound(
     }
     try {
       models = connectedModels(await timed.list());
+      listed = true;
       reason = undefined;
     } catch (error) {
       reason = errorMessage(error);
     }
   }
-  if (models.length === 0) return reason ? { kind: "none", reason } : { kind: "none" };
+  if (listed) memory.lastModels = models;
+  if (models.length === 0) {
+    if (!reason) return { kind: "none" };
+    // A listing that failed is not an unplugged device, so keep the devices found before.
+    if (memory.lastModels.length === 0) return { kind: "none", reason };
+    const result: PollResult = { kind: "unavailable", reason };
+    return { kind: "devices", devices: memory.lastModels.map((model) => ({ model, result })) };
+  }
 
-  // Polled side by side, so a device that stalls cannot hold up the others.
+  // Polled side by side, each with its own time limit, so a device that stalls cannot hold up
+  // the others.
   const devices = await Promise.all(
     models.map(async (model) => {
-      let modelMemory = memory.get(model.name);
-      if (!modelMemory) memory.set(model.name, (modelMemory = {}));
-      return { model, result: await poll(transport, model, time, modelMemory) };
+      let modelMemory = memory.devices.get(model.name);
+      if (!modelMemory) memory.devices.set(model.name, (modelMemory = {}));
+      return { model, result: await poll(transport, model, timing(options), modelMemory) };
     }),
   );
   return { kind: "devices", devices };

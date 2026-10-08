@@ -596,6 +596,56 @@ describe("createBatteryPoller", () => {
     });
   });
 
+  it("gives each device its full time limit after finding it", async () => {
+    let clock = 0;
+    let lists = 0;
+    const dongle = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+    ]);
+    const transport: HidTransport = {
+      // Finding the device takes the whole limit.
+      list: async () => {
+        if (lists++ === 0) clock += 10_000;
+        return dongle.list();
+      },
+      open: dongle.open,
+    };
+
+    const round = await createBatteryPoller(transport, {
+      ...options,
+      now: () => clock,
+      deadlineMs: 10_000,
+    })();
+
+    expect(round).toMatchObject({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
+    });
+  });
+
+  it("keeps the devices it found last time when listing devices fails", async () => {
+    let failing = false;
+    const dongle = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+    ]);
+    const transport: HidTransport = {
+      list: async () => {
+        if (failing) throw new Error("hid busy");
+        return dongle.list();
+      },
+      open: dongle.open,
+    };
+    const poll = createBatteryPoller(transport, options);
+
+    await poll();
+    failing = true;
+
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "unavailable", reason: "hid busy" } }],
+    });
+  });
+
   it("finds a dongle that shows up late", async () => {
     let lists = 0;
     const dongle = fakeTransport([
