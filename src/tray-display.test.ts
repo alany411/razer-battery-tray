@@ -84,6 +84,18 @@ describe("describeRound", () => {
     ]);
   });
 
+  it("says when the device list could not be updated", () => {
+    const displays = describeRound({
+      kind: "devices",
+      devices: [{ model: model(NAME), result: { kind: "unavailable", reason: "HID is busy" } }],
+      stale: true,
+    });
+
+    expect(displays.get(NAME)?.detail).toBe(
+      "HID is busy · A stuck HID request keeps the device list from updating",
+    );
+  });
+
   it("shows a single icon when no device is found", () => {
     expect([...describeRound({ kind: "none" })]).toEqual([
       [NO_DEVICE, { tooltip: "No Razer device found", iconText: "-", tone: "inactive" }],

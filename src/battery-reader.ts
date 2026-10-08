@@ -26,9 +26,12 @@ export interface DevicePoll {
   result: PollResult;
 }
 
-/** A poll of each connected device. `reason` says why listing devices failed, if it did. */
+/**
+ * A poll of each connected device. `reason` says why listing devices failed, if it did. `stale`
+ * means a stuck HID request kept the devices from being listed again, so the last listing was used.
+ */
 export type PollRound =
-  | { kind: "devices"; devices: DevicePoll[] }
+  | { kind: "devices"; devices: DevicePoll[]; stale?: true }
   | { kind: "none"; reason?: string };
 
 export interface HidDeviceInfo {
@@ -129,6 +132,8 @@ async function pollRound(
   const time = timing(options);
   const remaining = () => Math.max(0, time.deadline - time.now());
   const timed = withTimeouts(transport, () => Math.min(time.timeoutMs, remaining()));
+  // Everything from the last round has finished unless a call hung.
+  const stale = transport.blocked();
 
   let models: DeviceModel[] = [];
   let reason: string | undefined;
@@ -136,7 +141,7 @@ async function pollRound(
   for (let attempt = 0; attempt <= RETRIES && models.length === 0; attempt++) {
     if (attempt > 0) await time.sleep(Math.min(RETRY_DELAY_MS, remaining()));
     if (remaining() === 0) {
-      reason = "poll timed out";
+      reason = "listing devices timed out";
       break;
     }
     try {
@@ -165,7 +170,7 @@ async function pollRound(
       return { model, result: await poll(transport, model, timing(options), modelMemory) };
     }),
   );
-  return { kind: "devices", devices };
+  return stale ? { kind: "devices", devices, stale } : { kind: "devices", devices };
 }
 
 /** The table models with at least one interface present, in the order first seen. */
@@ -229,10 +234,11 @@ async function poll(
         lastReason = "poll timed out";
         break attempts;
       }
-      // A call that timed out earlier is still running, so another would only hold another thread.
-      if (candidates.some((c) => guarded.busy(c.path))) {
+      // A call that timed out earlier is still running on this link (the cable or the dongle), so
+      // another would only hold another thread.
+      if (candidates.some((c) => linkOf(c) === linkOf(candidate) && guarded.busy(c.path))) {
         lastReason = "device is not responding";
-        break;
+        continue;
       }
       try {
         const reading = await readFrom(transport, model, candidate, wait);
@@ -269,8 +275,9 @@ async function readFrom(
     }
     return { percent: Math.round((batteryByte / 255) * 100), charging };
   } catch (error) {
-    // The handle stays open for the next poll unless something went wrong with it.
-    await handle.close().catch(() => {});
+    // The handle stays open for the next poll unless something went wrong with it. A device that
+    // did not answer still has a working handle, and opening again may wait behind a hung open.
+    if (!(error instanceof DeviceAsleepError)) await handle.close().catch(() => {});
     throw error;
   }
 }
@@ -296,6 +303,8 @@ async function query(
 interface GuardedTransport extends HidTransport {
   /** Whether a call on this interface is still running, e.g. one that timed out but never returned. */
   busy(path: string): boolean;
+  /** Whether an open or listing is still running, which a new one would wait behind. */
+  blocked(): boolean;
 }
 
 /**
@@ -330,6 +339,7 @@ function guard(transport: HidTransport): GuardedTransport {
 
   return {
     busy: (path) => running.has(path),
+    blocked: () => queued > 0,
     list: () => {
       if (lastListed && queued > 0) return Promise.resolve(lastListed);
       if (listing) return listing;
@@ -353,6 +363,8 @@ function guard(transport: HidTransport): GuardedTransport {
     open: async (path) => {
       const open = handles.get(path);
       if (open) return open;
+      // It would wait behind the other one, and might never run; the poll retries later instead.
+      if (queued > 0) throw new Error("HID is busy");
       const raw = await track(path, inQueue(transport.open(path)));
       const handle: HidHandle = {
         sendFeatureReport: (data) => track(path, raw.sendFeatureReport(data)),

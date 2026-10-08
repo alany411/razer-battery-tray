@@ -152,14 +152,23 @@ describe("pollBattery", () => {
     });
   });
 
-  it("reports asleep when the dongle is present but the mouse never answers", async () => {
+  it("reports asleep when the dongle is present but the device never answers", async () => {
+    let requests = 0;
     const transport = fakeTransport([
-      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: () => ({ status: 0x04 }) },
+      {
+        productId: DONGLE_PRODUCT_ID,
+        path: "dongle",
+        respond: () => {
+          requests++;
+          return { status: 0x04 };
+        },
+      },
     ]);
 
     expect(await pollBattery(transport, options)).toEqual({ kind: "asleep" });
-    // The first attempt plus 3 retries.
-    expect(transport.opened).toHaveLength(4);
+    // The first attempt plus 3 retries, all through the one handle.
+    expect(requests).toBe(4);
+    expect(transport.opened).toHaveLength(1);
   });
 
   it("reports asleep when the dongle relays a 0% reading", async () => {
@@ -661,6 +670,70 @@ describe("createBatteryPoller", () => {
         ],
       });
     }
+  });
+
+  it("still reads the cable while a dongle call hangs", async () => {
+    let cable = false;
+    const devices = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+      { productId: WIRED_PRODUCT_ID, path: "wired", respond: awake(128, true) },
+    ]);
+    const transport: HidTransport = {
+      list: async () => (await devices.list()).filter((i) => cable || i.path === "dongle"),
+      open: async (path) => {
+        const handle = await devices.open(path);
+        return path === "dongle" ? { ...handle, getFeatureReport: hang } : handle;
+      },
+    };
+    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+
+    await poll();
+    cable = true;
+
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "reading", reading: { percent: 50, charging: true } },
+        },
+      ],
+    });
+  });
+
+  it("keeps showing an asleep device as asleep while another device's open hangs", async () => {
+    let hungOpen = false;
+    const viper = { productId: 0x00c1, path: "viper", respond: () => ({ status: 0x04 }) };
+    let listed: FakeDevice[] = [viper];
+    const devices = fakeTransport([
+      viper,
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+    ]);
+    const transport: HidTransport = {
+      list: () => (hungOpen ? hang() : Promise.resolve(listed)),
+      open: (path) => {
+        if (hungOpen) return hang();
+        if (path === "stuck") {
+          hungOpen = true;
+          return hang();
+        }
+        return devices.open(path);
+      },
+    };
+    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+
+    await poll();
+    listed = [viper, { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) }];
+    const rounds = [await poll(), await poll()];
+
+    for (const round of rounds) {
+      expect(round).toMatchObject({
+        kind: "devices",
+        devices: [{ model: model("Viper V3 Pro"), result: { kind: "asleep" } }, {}],
+      });
+    }
+    // Listing waits behind the hung open, so the last listing is used and may be out of date.
+    expect(rounds[1]).toMatchObject({ stale: true });
   });
 
   it("does not list devices again while an earlier listing still hangs", async () => {
