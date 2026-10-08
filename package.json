@@ -2,7 +2,7 @@
   "name": "razer-battery-tray",
   "version": "0.1.0",
   "private": true,
-  "description": "Windows tray app showing the battery percentage of a Razer DeathAdder V3 Pro",
+  "description": "Windows tray app showing the battery percentage of Razer wireless mice and keyboards",
   "author": "Alan Yang",
   "type": "module",
   "main": "dist/main.js",
