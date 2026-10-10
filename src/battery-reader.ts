@@ -224,11 +224,12 @@ async function poll(
       continue;
     }
     // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
-    // Then the interface that answered last time, and last any whose open hung before.
+    // Then the interface that answered last time. Any whose open hung before goes last, so if it
+    // hangs again the others have had their turn.
     const candidates = [...interfaces.filter(isWired), ...interfaces.filter(isWireless)].toSorted(
       (a, b) =>
-        Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath) ||
-        Number(guarded.hungBefore(a.path)) - Number(guarded.hungBefore(b.path)),
+        Number(guarded.hungBefore(a.path)) - Number(guarded.hungBefore(b.path)) ||
+        Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath),
     );
     if (candidates.length === 0) {
       lastReason = "device not found";
@@ -271,9 +272,9 @@ async function poll(
     }
   }
 
-  if (!wired && deviceAsleep) return { kind: "asleep" };
-  // Other interfaces failing says less than the one that hung.
-  return { kind: "unavailable", reason: skippedHung ? QUARANTINED : lastReason };
+  // Other interfaces failing or not answering says less than the one that hung, which was not tried.
+  if (skippedHung) return { kind: "unavailable", reason: QUARANTINED };
+  return !wired && deviceAsleep ? { kind: "asleep" } : { kind: "unavailable", reason: lastReason };
 }
 
 async function readFrom(

@@ -858,6 +858,55 @@ describe("createBatteryPoller", () => {
     expect(hid.opened.filter((path) => path === "wrong-interface").length).toBeGreaterThan(0);
   });
 
+  it("says a device stopped responding rather than asleep while one of its interfaces is quarantined", async () => {
+    const hid = hidProcess(
+      [
+        { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+        { productId: DONGLE_PRODUCT_ID, path: "quiet", respond: () => ({ status: 0x04 }) },
+      ],
+      new Set(["stuck"]),
+    );
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
+
+    // Hangs in rounds 1 and 3, so it is left alone in rounds 4 and 5; round 5 is no restart.
+    for (let round = 1; round <= 4; round++) await poll();
+
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "unavailable", reason: "device stopped responding" },
+        },
+      ],
+    });
+  });
+
+  it("tries an interface whose open hung after the others, even if it answered last time", async () => {
+    const hangs = new Set(["viper"]);
+    const hid = hidProcess(
+      [
+        { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+        { productId: DONGLE_PRODUCT_ID, path: "control", respond: awake(255, false) },
+        { productId: 0x00c1, path: "viper", respond: awake(255, false) },
+      ],
+      hangs,
+    );
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
+
+    // "stuck" answers, then hangs when the restart for Viper's hung open makes it open again.
+    await poll();
+    hangs.clear();
+    hangs.add("stuck");
+    await poll();
+    await poll();
+
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }, {}],
+    });
+  });
+
   it("opens an interface whose open hung again once it is plugged back in", async () => {
     const stuck = { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) };
     const devices: FakeDevice[] = [stuck];
