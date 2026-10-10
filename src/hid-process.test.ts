@@ -120,6 +120,8 @@ describe("remoteHidTransport", () => {
     const handle = await transport.open("dongle");
 
     transport.restart();
+    // The killed process exits afterwards, which must not change why it ended.
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     await expect(handle.getFeatureReport(0, 91)).rejects.toThrow("HID process restarted");
     await expect(handle.close()).resolves.toBeUndefined();

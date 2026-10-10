@@ -107,6 +107,8 @@ export function remoteHidTransport(spawn: SpawnHidProcess): RestartableHidTransp
   let nextId = 0;
 
   const end = (connection: Connection, reason: string) => {
+    // A killed process exits afterwards; it ended because of the restart.
+    if (connection.ended !== undefined) return;
     if (current === connection) current = undefined;
     connection.ended = reason;
     for (const { reject } of connection.pending.values()) reject(new Error(reason));
