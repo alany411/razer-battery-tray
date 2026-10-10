@@ -86,7 +86,8 @@ export function serveHid(
 interface Connection {
   process?: HidProcess;
   ready: boolean;
-  ended: boolean;
+  /** Why the process ended, once it has. */
+  ended?: string;
   /** Requests made before the process was listening. */
   waiting: HidRequest[];
   pending: Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>;
@@ -102,14 +103,14 @@ export function remoteHidTransport(spawn: SpawnHidProcess): Required<HidTranspor
 
   const end = (connection: Connection, reason: string) => {
     if (current === connection) current = undefined;
-    connection.ended = true;
+    connection.ended = reason;
     for (const { reject } of connection.pending.values()) reject(new Error(reason));
     connection.pending.clear();
   };
 
   const connect = (): Connection => {
     if (current) return current;
-    const connection: Connection = { ready: false, ended: false, waiting: [], pending: new Map() };
+    const connection: Connection = { ready: false, waiting: [], pending: new Map() };
     current = connection;
     connection.process = spawn(
       (message) => {
@@ -130,7 +131,7 @@ export function remoteHidTransport(spawn: SpawnHidProcess): Required<HidTranspor
   };
 
   const call = <T>(connection: Connection, request: HidCall): Promise<T> => {
-    if (connection.ended) return Promise.reject(new Error("HID process restarted"));
+    if (connection.ended !== undefined) return Promise.reject(new Error(connection.ended));
     return new Promise<T>((resolve, reject) => {
       const message = { id: nextId++, request };
       connection.pending.set(message.id, { resolve: (value) => resolve(value as T), reject });
@@ -151,7 +152,7 @@ export function remoteHidTransport(spawn: SpawnHidProcess): Required<HidTranspor
           call(connection, { call: "getFeatureReport", path, reportId, length }),
         // Ending the process closed it already.
         close: async () => {
-          if (!connection.ended) await call(connection, { call: "close", path });
+          if (connection.ended === undefined) await call(connection, { call: "close", path });
         },
       };
     },

@@ -138,6 +138,17 @@ describe("remoteHidTransport", () => {
     expect(spawned).toHaveLength(2);
   });
 
+  it("says the HID process exited when a handle from it is used", async () => {
+    const { spawn, spawned } = processes(dongle);
+    const transport = remoteHidTransport(spawn);
+    const handle = await transport.open("dongle");
+
+    spawned[0]?.exit();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await expect(handle.getFeatureReport(0, 91)).rejects.toThrow("HID process exited");
+  });
+
   it("reads devices again on the next poll after the HID process exits", async () => {
     const { spawn, spawned } = processes(dongle);
     const poll = createBatteryPoller(remoteHidTransport(spawn), { sleep: async () => {} });
