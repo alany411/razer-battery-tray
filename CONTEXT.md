@@ -28,5 +28,17 @@ The dongle is present but the device does not answer a battery request, or answe
 _Avoid_: Disconnected, offline
 
 **Unavailable**:
-No reading could be taken after all retries or within the poll's 10-second limit (requests kept failing, or the poll ran out of time). With no device found at all, the app shows a single **No Razer device found** icon that looks like Unavailable. If listing devices fails, the devices found last time stay and show Unavailable. If a stuck HID request keeps devices from being listed again, the devices found last time are still polled, and their menus say so.
+No reading could be taken after all retries or within the poll's 10-second limit (requests kept failing, or the poll ran out of time). With no device found at all, the app shows a single **No Razer device found** icon that looks like Unavailable. If listing devices fails, the devices found last time stay and show Unavailable. A device shows Unavailable, with the reason "device stopped responding", when an interface of it is in quarantine and no other interface gives a reading.
 _Avoid_: Error state
+
+**Interface**:
+One HID path of a device's connection, which node-hid opens and lists. A dongle often has several, of which one answers battery requests.
+_Avoid_: Endpoint, path (outside the code)
+
+**HID process**:
+The separate process that does all HID work for the app: listing, opening, and the battery requests. It is restarted when an open or listing hangs, which drops every open handle.
+_Avoid_: Worker, helper
+
+**Quarantine**:
+The polls in which an interface is not opened because its open hung, doubling from 1 to at most 15 after each hang. In the poll right after a restart, the other interfaces on its cable or dongle are not opened either, since they may hang just the same. The doubling starts over when the interface opens or leaves a listing.
+_Avoid_: Blacklist, cooldown

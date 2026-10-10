@@ -26,12 +26,9 @@ export interface DevicePoll {
   result: PollResult;
 }
 
-/**
- * A poll of each connected device. `reason` says why listing devices failed, if it did. `stale`
- * means a stuck HID request kept the devices from being listed again, so the last listing was used.
- */
+/** A poll of each connected device. `reason` says why listing devices failed, if it did. */
 export type PollRound =
-  | { kind: "devices"; devices: DevicePoll[]; stale?: true }
+  | { kind: "devices"; devices: DevicePoll[] }
   | { kind: "none"; reason?: string };
 
 export interface HidDeviceInfo {
@@ -50,6 +47,14 @@ export interface HidHandle {
 export interface HidTransport {
   list(): Promise<HidDeviceInfo[]>;
   open(path: string): Promise<HidHandle>;
+}
+
+export interface RestartableHidTransport extends HidTransport {
+  /**
+   * Starts the HID work over, ending every call still running, e.g. an open that never returns.
+   * Handles opened before stop working.
+   */
+  restart(): void;
 }
 
 export interface PollOptions {
@@ -71,6 +76,9 @@ const RESPONSE_DELAY_MS = 50;
 const HID_TIMEOUT_MS = 2_000;
 // Keeps Refresh now responsive (at most twice this per round) even when every interface is stuck.
 const POLL_DEADLINE_MS = 10_000;
+/** The most rounds in a row an interface whose open hung is left unopened. */
+const MAX_QUARANTINE_ROUNDS = 15;
+const QUARANTINED = "device stopped responding";
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -80,12 +88,12 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
  * interfaces that stall cannot use up the poll's time limit.
  */
 export function createBatteryPoller(
-  transport: HidTransport,
+  transport: RestartableHidTransport,
   options: PollOptions = {},
 ): () => Promise<PollRound> {
   const memory: RoundMemory = { devices: new Map(), lastModels: [] };
   const guarded = guard(transport);
-  return () => pollRound(guarded, options, memory);
+  return () => pollRound(guarded, () => transport.restart(), options, memory);
 }
 
 /** Polls one model, whether or not it is connected. */
@@ -126,14 +134,14 @@ function timing({
 
 async function pollRound(
   transport: GuardedTransport,
+  restart: () => void,
   options: PollOptions,
   memory: RoundMemory,
 ): Promise<PollRound> {
   const time = timing(options);
   const remaining = () => Math.max(0, time.deadline - time.now());
   const timed = withTimeouts(transport, () => Math.min(time.timeoutMs, remaining()));
-  // Everything from the last round has finished unless a call hung.
-  const stale = transport.blocked();
+  transport.newRound(restart);
 
   let models: DeviceModel[] = [];
   let reason: string | undefined;
@@ -170,7 +178,7 @@ async function pollRound(
       return { model, result: await poll(transport, model, timing(options), modelMemory) };
     }),
   );
-  return stale ? { kind: "devices", devices, stale } : { kind: "devices", devices };
+  return { kind: "devices", devices };
 }
 
 /** The table models with at least one interface present, in the order first seen. */
@@ -199,6 +207,7 @@ async function poll(
   let lastReason = "";
   let deviceAsleep = false;
   let wired = false;
+  let skippedHung = false;
   attempts: for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt > 0) await wait(RETRY_DELAY_MS);
     if (remaining() === 0) {
@@ -215,9 +224,12 @@ async function poll(
       continue;
     }
     // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
-    // Then the interface that answered last time.
+    // Then the interface that answered last time. Any whose open hung before goes last, so if it
+    // hangs again the others have had their turn.
     const candidates = [...interfaces.filter(isWired), ...interfaces.filter(isWireless)].toSorted(
-      (a, b) => Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath),
+      (a, b) =>
+        Number(guarded.hungBefore(a.path)) - Number(guarded.hungBefore(b.path)) ||
+        Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath),
     );
     if (candidates.length === 0) {
       lastReason = "device not found";
@@ -228,12 +240,21 @@ async function poll(
     wired = candidates.some(isWired);
     // Asleep needs the dongle to be present now, not just on an earlier attempt.
     if (!candidates.some(isWireless)) deviceAsleep = false;
+    // Opening it could hang the HID work again before the other devices are opened. Right after a
+    // restart every device opens again, so the other interfaces on its link (the cable or the
+    // dongle), which may hang just the same, wait that round too.
+    const hung = (c: HidDeviceInfo) =>
+      guarded.quarantined(c.path) ||
+      (guarded.restarted() &&
+        candidates.some((o) => linkOf(o) === linkOf(c) && guarded.quarantined(o.path)));
+    skippedHung = candidates.some(hung);
 
     for (const candidate of candidates) {
       if (remaining() === 0) {
         lastReason = "poll timed out";
         break attempts;
       }
+      if (hung(candidate)) continue;
       // A call that timed out earlier is still running on this link (the cable or the dongle), so
       // another would only hold another thread.
       if (candidates.some((c) => linkOf(c) === linkOf(candidate) && guarded.busy(c.path))) {
@@ -251,6 +272,8 @@ async function poll(
     }
   }
 
+  // Other interfaces failing or not answering says less than the one that hung, which was not tried.
+  if (skippedHung) return { kind: "unavailable", reason: QUARANTINED };
   return !wired && deviceAsleep ? { kind: "asleep" } : { kind: "unavailable", reason: lastReason };
 }
 
@@ -303,81 +326,141 @@ async function query(
 interface GuardedTransport extends HidTransport {
   /** Whether a call on this interface is still running, e.g. one that timed out but never returned. */
   busy(path: string): boolean;
-  /** Whether an open or listing is still running, which a new one would wait behind. */
-  blocked(): boolean;
+  /** Whether this interface is left unopened this round because an open of it hung. */
+  quarantined(path: string): boolean;
+  /** Whether an open of this interface hung since it last opened or left a listing. */
+  hungBefore(path: string): boolean;
+  /** Whether this round began with a restart. */
+  restarted(): boolean;
+  /**
+   * Calls `restart` if an open or listing from earlier is still running, since every new one would
+   * wait behind it, and quarantines the interfaces whose open hung.
+   */
+  newRound(restart: () => void): void;
+}
+
+interface Quarantine {
+  /** Opens that hung since the interface last opened or left a listing. */
+  hangs: number;
+  roundsLeft: number;
+}
+
+/** HID calls made since the last restart. */
+interface Calls {
+  running: Map<string, number>;
+  handles: Map<string, HidHandle>;
+  /** Interfaces with an open still running. */
+  opening: Set<string>;
+  /** Opens and listings still running, which hold up any new one. */
+  queued: number;
+  listing?: Promise<HidDeviceInfo[]>;
+  lastListed?: HidDeviceInfo[];
 }
 
 /**
  * Keeps hung HID calls from piling up. node-hid runs each call on one of a few shared threads, and
- * a timeout does not stop it. It also opens and lists one at a time for the whole app, so a hung
- * open or listing holds up every later one. So this keeps handles open between polls, gives the
- * last listing while an open or listing is still running, and `busy` tells which interfaces to
- * leave alone.
+ * a timeout does not stop it. It also opens and lists one at a time for the whole process, so a
+ * hung open or listing holds up every later one until the HID work is restarted. So this keeps
+ * handles open between polls, gives the last listing while an open or listing is still running,
+ * restarts at the next round, and `busy` tells which interfaces to leave alone.
  */
 function guard(transport: HidTransport): GuardedTransport {
-  const running = new Map<string, number>();
-  const handles = new Map<string, HidHandle>();
-  // Opens and listings still running, which hold up any new one.
-  let queued = 0;
-  let listing: Promise<HidDeviceInfo[]> | undefined;
-  let lastListed: HidDeviceInfo[] | undefined;
-
-  const track = <T>(path: string, call: Promise<T>): Promise<T> => {
-    running.set(path, (running.get(path) ?? 0) + 1);
-    settled(call, () => {
-      const left = (running.get(path) ?? 1) - 1;
-      if (left === 0) running.delete(path);
-      else running.set(path, left);
-    });
-    return call;
-  };
-  const inQueue = <T>(call: Promise<T>): Promise<T> => {
-    queued++;
-    settled(call, () => queued--);
-    return call;
-  };
+  let calls = freshCalls();
+  let restarted = false;
+  // Keyed by path. Kept across restarts.
+  const quarantine = new Map<string, Quarantine>();
 
   return {
-    busy: (path) => running.has(path),
-    blocked: () => queued > 0,
+    busy: (path) => calls.running.has(path),
+    quarantined: (path) => (quarantine.get(path)?.roundsLeft ?? 0) > 0,
+    hungBefore: (path) => quarantine.has(path),
+    restarted: () => restarted,
+    newRound: (restart) => {
+      for (const q of quarantine.values()) q.roundsLeft = Math.max(0, q.roundsLeft - 1);
+      restarted = calls.queued > 0;
+      if (!restarted) return;
+      // Each hang doubles the rounds it is left alone: 1, 2, 4 and so on.
+      for (const path of calls.opening) {
+        const hangs = (quarantine.get(path)?.hangs ?? 0) + 1;
+        quarantine.set(path, {
+          hangs,
+          roundsLeft: Math.min(2 ** (hangs - 1), MAX_QUARANTINE_ROUNDS),
+        });
+      }
+      calls = freshCalls();
+      restart();
+    },
     list: () => {
-      if (lastListed && queued > 0) return Promise.resolve(lastListed);
-      if (listing) return listing;
-      const started = inQueue(transport.list());
-      listing = started;
+      const current = calls;
+      if (current.lastListed && current.queued > 0) return Promise.resolve(current.lastListed);
+      if (current.listing) return current.listing;
+      const started = inQueue(current, transport.list());
+      current.listing = started;
       started.then(
         (listed) => {
-          listing = undefined;
-          lastListed = listed;
-          // Let go of interfaces that are gone, e.g. an unplugged dongle.
-          for (const [path, handle] of handles) {
+          delete current.listing;
+          current.lastListed = listed;
+          // Let go of interfaces that are gone, e.g. an unplugged dongle. Plugged in again, it gets
+          // a fresh start.
+          for (const [path, handle] of current.handles) {
             if (!listed.some((i) => i.path === path)) void handle.close().catch(() => {});
+          }
+          for (const path of quarantine.keys()) {
+            if (!listed.some((i) => i.path === path)) quarantine.delete(path);
           }
         },
         () => {
-          listing = undefined;
+          delete current.listing;
         },
       );
       return started;
     },
     open: async (path) => {
-      const open = handles.get(path);
+      const current = calls;
+      const open = current.handles.get(path);
       if (open) return open;
       // It would wait behind the other one, and might never run; the poll retries later instead.
-      if (queued > 0) throw new Error("HID is busy");
-      const raw = await track(path, inQueue(transport.open(path)));
+      if (current.queued > 0) throw new Error("HID is busy");
+      const opening = inQueue(current, transport.open(path));
+      current.opening.add(path);
+      settled(opening, () => current.opening.delete(path));
+      const raw = await track(current, path, opening);
+      quarantine.delete(path);
       const handle: HidHandle = {
-        sendFeatureReport: (data) => track(path, raw.sendFeatureReport(data)),
-        getFeatureReport: (reportId, length) => track(path, raw.getFeatureReport(reportId, length)),
+        sendFeatureReport: (data) => track(current, path, raw.sendFeatureReport(data)),
+        getFeatureReport: (reportId, length) =>
+          track(current, path, raw.getFeatureReport(reportId, length)),
         close: () => {
-          if (handles.get(path) === handle) handles.delete(path);
-          return track(path, raw.close());
+          if (current.handles.get(path) === handle) current.handles.delete(path);
+          return track(current, path, raw.close());
         },
       };
-      handles.set(path, handle);
+      current.handles.set(path, handle);
       return handle;
     },
   };
+}
+
+function freshCalls(): Calls {
+  return { running: new Map(), handles: new Map(), opening: new Set(), queued: 0 };
+}
+
+/** Counts `call` as running on this interface until it settles. */
+function track<T>({ running }: Calls, path: string, call: Promise<T>): Promise<T> {
+  running.set(path, (running.get(path) ?? 0) + 1);
+  settled(call, () => {
+    const left = (running.get(path) ?? 1) - 1;
+    if (left === 0) running.delete(path);
+    else running.set(path, left);
+  });
+  return call;
+}
+
+/** Counts an open or listing as holding up any new one until it settles. */
+function inQueue<T>(calls: Calls, call: Promise<T>): Promise<T> {
+  calls.queued++;
+  settled(call, () => calls.queued--);
+  return call;
 }
 
 /** Runs `done` once `call` settles, either way. */

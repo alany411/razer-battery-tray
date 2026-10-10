@@ -37,17 +37,9 @@ export function describeRound(round: PollRound): Map<string, TrayDisplay> {
     ]);
   }
   return new Map(
-    round.devices.map(({ model, result }) => {
-      const display = describePollResult(model.name, result);
-      if (round.stale) {
-        display.detail = [display.detail, STALE_DETAIL].filter(Boolean).join(" · ");
-      }
-      return [model.name, display];
-    }),
+    round.devices.map(({ model, result }) => [model.name, describePollResult(model.name, result)]),
   );
 }
-
-const STALE_DETAIL = "A stuck HID request keeps devices from being listed again";
 
 export function describePollResult(name: string, result: PollResult): TrayDisplay {
   switch (result.kind) {

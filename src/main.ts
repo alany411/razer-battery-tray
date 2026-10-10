@@ -1,10 +1,12 @@
-import { Menu, Notification, Tray, app, nativeImage, nativeTheme } from "electron";
+import { join } from "node:path";
+import { Menu, Notification, Tray, app, nativeImage, nativeTheme, utilityProcess } from "electron";
 import type { NativeImage } from "electron";
 import { APP_ID } from "./app-id.js";
 import { createBatteryPoller } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
+import { remoteHidTransport } from "./hid-process.js";
+import type { HidProcess, HidMessage } from "./hid-process.js";
 import { LowBatteryAlerts } from "./low-battery-alerts.js";
-import { nodeHidTransport } from "./node-hid-transport.js";
 import { READING_DISPLAYS, describeLowBattery, describeRound } from "./tray-display.js";
 import type { TrayDisplay } from "./tray-display.js";
 import { rerunQueue } from "./rerun-queue.js";
@@ -21,7 +23,8 @@ const ICON_SCALES = [1, 1.5, 2] as const;
 
 // Keyed by model name, like the displays.
 const alerts = new Map<string, LowBatteryAlerts>();
-const pollBattery = createBatteryPoller(nodeHidTransport);
+// HID runs in its own process, restarted when an open or listing hangs.
+const pollBattery = createBatteryPoller(remoteHidTransport(forkHidProcess));
 const trays = new Map<string, Tray>();
 let taskbar: Taskbar = "dark";
 let displays: ReadonlyMap<string, TrayDisplay> = READING_DISPLAYS;
@@ -146,4 +149,18 @@ function notifyIfLow(name: string, reading: BatteryReading): void {
   for (const threshold of thresholds) {
     new Notification(describeLowBattery(name, threshold, reading)).show();
   }
+}
+
+function forkHidProcess(onMessage: (message: HidMessage) => void, onExit: () => void): HidProcess {
+  const child = utilityProcess.fork(join(import.meta.dirname, "hid-process-entry.js"), [], {
+    serviceName: "Razer Battery Tray HID",
+  });
+  child.on("message", onMessage);
+  child.on("exit", onExit);
+  return {
+    // A utility process takes no target origin, unlike a window.
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin
+    post: (request) => child.postMessage(request),
+    kill: () => void child.kill(),
+  };
 }
