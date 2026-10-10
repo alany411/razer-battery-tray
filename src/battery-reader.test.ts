@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createBatteryPoller, pollDevice } from "./battery-reader.js";
-import type { HidDeviceInfo, HidHandle, HidTransport, PollOptions } from "./battery-reader.js";
+import type {
+  HidDeviceInfo,
+  HidHandle,
+  HidTransport,
+  PollOptions,
+  RestartableHidTransport,
+} from "./battery-reader.js";
 import { DEVICE_TABLE } from "./device-table.js";
 import type { DeviceModel } from "./device-table.js";
 
@@ -68,6 +74,10 @@ const awake =
 const options = { sleep: async () => {} };
 
 const hang = () => new Promise<never>(() => {});
+
+/** A poller for transports whose calls never hang, so restarting them has nothing to end. */
+const poller = (transport: HidTransport, opts: PollOptions) =>
+  createBatteryPoller({ restart: () => {}, ...transport }, opts);
 
 /**
  * A fake HID process: an open of a path in `hangs` never returns, and holds up every later open and
@@ -533,7 +543,7 @@ describe("createBatteryPoller", () => {
       { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: () => "error" },
       { productId: DONGLE_PRODUCT_ID, path: "control", respond: awake(255, false) },
     ]);
-    const poll = createBatteryPoller(transport, options);
+    const poll = poller(transport, options);
 
     await poll();
     await poll();
@@ -549,7 +559,7 @@ describe("createBatteryPoller", () => {
       { productId: 0x1234, path: "other", respond: awake(255, false) },
     ]);
 
-    expect(await createBatteryPoller(transport, options)()).toEqual({
+    expect(await poller(transport, options)()).toEqual({
       kind: "devices",
       devices: [
         {
@@ -570,7 +580,7 @@ describe("createBatteryPoller", () => {
       { productId: WIRED_PRODUCT_ID, path: "wired", respond: awake(128, true) },
     ]);
 
-    expect(await createBatteryPoller(transport, options)()).toEqual({
+    expect(await poller(transport, options)()).toEqual({
       kind: "devices",
       devices: [
         {
@@ -595,7 +605,7 @@ describe("createBatteryPoller", () => {
       },
     };
 
-    const round = await createBatteryPoller(transport, { ...options, timeoutMs: 5 })();
+    const round = await poller(transport, { ...options, timeoutMs: 5 })();
 
     expect(round).toEqual({
       kind: "devices",
@@ -625,7 +635,7 @@ describe("createBatteryPoller", () => {
         return path === "stuck" ? { ...handle, getFeatureReport: hang } : handle;
       },
     };
-    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+    const poll = poller(transport, { ...options, timeoutMs: 5 });
 
     await poll();
     const round = await poll();
@@ -657,7 +667,7 @@ describe("createBatteryPoller", () => {
       list: devices.list,
       open: async (path) => ({ ...(await devices.open(path)), getFeatureReport: hang }),
     };
-    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+    const poll = poller(transport, { ...options, timeoutMs: 5 });
 
     await poll();
     await poll();
@@ -679,7 +689,7 @@ describe("createBatteryPoller", () => {
         return path === "dongle" ? { ...handle, getFeatureReport: hang } : handle;
       },
     };
-    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+    const poll = poller(transport, { ...options, timeoutMs: 5 });
 
     await poll();
     cable = true;
@@ -702,7 +712,7 @@ describe("createBatteryPoller", () => {
       { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
     ];
     const hid = hidProcess(devices, new Set(["stuck"]));
-    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
 
     expect(await poll()).toMatchObject({
       kind: "devices",
@@ -722,7 +732,7 @@ describe("createBatteryPoller", () => {
       { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
     ];
     const hid = hidProcess(devices, new Set(["stuck"]));
-    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
 
     await poll();
     devices.push({ productId: 0x00c1, path: "viper", respond: awake(255, false) });
@@ -749,7 +759,7 @@ describe("createBatteryPoller", () => {
       { productId: 0x00c1, path: "viper", respond: awake(255, false) },
     ];
     const hid = hidProcess(devices, new Set(["stuck"]));
-    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
 
     const roundsOpened: number[] = [];
     const rounds = [];
@@ -777,9 +787,19 @@ describe("createBatteryPoller", () => {
       ],
       new Set(["stuck"]),
     );
-    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
 
     await poll();
+    // Right after the restart the whole dongle waits, in case its other interface hangs too.
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "unavailable", reason: "device stopped responding" },
+        },
+      ],
+    });
 
     expect(await poll()).toMatchObject({
       kind: "devices",
@@ -787,12 +807,63 @@ describe("createBatteryPoller", () => {
     });
   });
 
+  it("keeps reading other devices when each of a dongle's interfaces hangs in turn", async () => {
+    const hid = hidProcess(
+      [
+        { productId: DONGLE_PRODUCT_ID, path: "first", respond: awake(255, false) },
+        { productId: DONGLE_PRODUCT_ID, path: "second", respond: awake(255, false) },
+        { productId: 0x00c1, path: "viper", respond: awake(255, false) },
+      ],
+      new Set(["first", "second"]),
+    );
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
+
+    await poll();
+    const rounds = [];
+    for (let round = 2; round <= 8; round++) rounds.push(await poll());
+
+    for (const round of rounds) {
+      expect(round).toMatchObject({
+        kind: "devices",
+        devices: [
+          { model: DEATHADDER_V3_PRO, result: { kind: "unavailable" } },
+          { model: model("Viper V3 Pro"), result: { kind: "reading" } },
+        ],
+      });
+    }
+  });
+
+  it("says a device stopped responding while its other interfaces fail", async () => {
+    const hid = hidProcess(
+      [
+        { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+        { productId: DONGLE_PRODUCT_ID, path: "wrong-interface", respond: () => "error" },
+      ],
+      new Set(["stuck"]),
+    );
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
+
+    // Hangs in rounds 1 and 3, so it is left alone in rounds 4 and 5; round 5 is no restart.
+    for (let round = 1; round <= 4; round++) await poll();
+
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "unavailable", reason: "device stopped responding" },
+        },
+      ],
+    });
+    expect(hid.opened.filter((path) => path === "wrong-interface").length).toBeGreaterThan(0);
+  });
+
   it("opens an interface whose open hung again once it is plugged back in", async () => {
     const stuck = { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) };
     const devices: FakeDevice[] = [stuck];
     const hangs = new Set(["stuck"]);
     const hid = hidProcess(devices, hangs);
-    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
 
     await poll();
     await poll();
@@ -814,14 +885,14 @@ describe("createBatteryPoller", () => {
     const dongle = fakeTransport([
       { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
     ]);
-    const transport: HidTransport = {
+    const transport: RestartableHidTransport = {
       list: () => (hung ? hang() : dongle.list()),
       open: dongle.open,
       restart: () => {
         hung = false;
       },
     };
-    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+    const poll = poller(transport, { ...options, timeoutMs: 5 });
 
     expect(await poll()).toMatchObject({ kind: "none" });
 
@@ -831,31 +902,12 @@ describe("createBatteryPoller", () => {
     });
   });
 
-  it("does not list devices again while an earlier listing still hangs and HID cannot restart", async () => {
-    let lists = 0;
-    const transport: HidTransport = {
-      list: () => {
-        lists++;
-        return hang();
-      },
-      open: async () => {
-        throw new Error("unreachable");
-      },
-    };
-    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
-
-    await poll();
-    await poll();
-
-    expect(lists).toBe(1);
-  });
-
   it("reports when no supported device is connected", async () => {
     const transport = fakeTransport([
       { productId: 0x1234, path: "other", respond: awake(255, false) },
     ]);
 
-    expect(await createBatteryPoller(transport, options)()).toEqual({ kind: "none" });
+    expect(await poller(transport, options)()).toEqual({ kind: "none" });
     expect(transport.opened).toEqual([]);
   });
 
@@ -869,7 +921,7 @@ describe("createBatteryPoller", () => {
       },
     };
 
-    expect(await createBatteryPoller(transport, options)()).toEqual({
+    expect(await poller(transport, options)()).toEqual({
       kind: "none",
       reason: "hid unavailable",
     });
@@ -890,7 +942,7 @@ describe("createBatteryPoller", () => {
       open: dongle.open,
     };
 
-    const round = await createBatteryPoller(transport, {
+    const round = await poller(transport, {
       ...options,
       now: () => clock,
       deadlineMs: 10_000,
@@ -914,7 +966,7 @@ describe("createBatteryPoller", () => {
       },
       open: dongle.open,
     };
-    const poll = createBatteryPoller(transport, options);
+    const poll = poller(transport, options);
 
     await poll();
     failing = true;
@@ -935,7 +987,7 @@ describe("createBatteryPoller", () => {
       open: dongle.open,
     };
 
-    expect(await createBatteryPoller(transport, options)()).toMatchObject({
+    expect(await poller(transport, options)()).toMatchObject({
       kind: "devices",
       devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
     });

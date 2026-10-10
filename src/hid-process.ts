@@ -1,4 +1,9 @@
-import type { HidDeviceInfo, HidHandle, HidTransport } from "./battery-reader.js";
+import type {
+  HidDeviceInfo,
+  HidHandle,
+  HidTransport,
+  RestartableHidTransport,
+} from "./battery-reader.js";
 
 /** A HID call the main process asks the HID process to make. */
 export type HidCall =
@@ -50,7 +55,7 @@ export function serveHid(
         return transport.list();
       case "open": {
         const handle = await transport.open(request.path);
-        // Opened again after a timeout in the main process, which closed the one before.
+        // Should the main process open a path it still holds, the old handle is let go, not leaked.
         void handles
           .get(request.path)
           ?.close()
@@ -97,7 +102,7 @@ interface Connection {
  * A transport that makes every HID call in a HID process, started on the first call. `restart`
  * kills it, ending every call still running in it, e.g. an open that never returns.
  */
-export function remoteHidTransport(spawn: SpawnHidProcess): Required<HidTransport> {
+export function remoteHidTransport(spawn: SpawnHidProcess): RestartableHidTransport {
   let current: Connection | undefined;
   let nextId = 0;
 

@@ -47,11 +47,14 @@ export interface HidHandle {
 export interface HidTransport {
   list(): Promise<HidDeviceInfo[]>;
   open(path: string): Promise<HidHandle>;
+}
+
+export interface RestartableHidTransport extends HidTransport {
   /**
    * Starts the HID work over, ending every call still running, e.g. an open that never returns.
    * Handles opened before stop working.
    */
-  restart?(): void;
+  restart(): void;
 }
 
 export interface PollOptions {
@@ -75,6 +78,7 @@ const HID_TIMEOUT_MS = 2_000;
 const POLL_DEADLINE_MS = 10_000;
 /** The most rounds in a row an interface whose open hung is left unopened. */
 const MAX_QUARANTINE_ROUNDS = 15;
+const QUARANTINED = "device stopped responding";
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -84,12 +88,12 @@ const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(r
  * interfaces that stall cannot use up the poll's time limit.
  */
 export function createBatteryPoller(
-  transport: HidTransport,
+  transport: RestartableHidTransport,
   options: PollOptions = {},
 ): () => Promise<PollRound> {
   const memory: RoundMemory = { devices: new Map(), lastModels: [] };
   const guarded = guard(transport);
-  return () => pollRound(guarded, options, memory);
+  return () => pollRound(guarded, () => transport.restart(), options, memory);
 }
 
 /** Polls one model, whether or not it is connected. */
@@ -130,13 +134,14 @@ function timing({
 
 async function pollRound(
   transport: GuardedTransport,
+  restart: () => void,
   options: PollOptions,
   memory: RoundMemory,
 ): Promise<PollRound> {
   const time = timing(options);
   const remaining = () => Math.max(0, time.deadline - time.now());
   const timed = withTimeouts(transport, () => Math.min(time.timeoutMs, remaining()));
-  transport.newRound();
+  transport.newRound(restart);
 
   let models: DeviceModel[] = [];
   let reason: string | undefined;
@@ -202,6 +207,7 @@ async function poll(
   let lastReason = "";
   let deviceAsleep = false;
   let wired = false;
+  let skippedHung = false;
   attempts: for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt > 0) await wait(RETRY_DELAY_MS);
     if (remaining() === 0) {
@@ -218,9 +224,11 @@ async function poll(
       continue;
     }
     // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
-    // Then the interface that answered last time.
+    // Then the interface that answered last time, and last any whose open hung before.
     const candidates = [...interfaces.filter(isWired), ...interfaces.filter(isWireless)].toSorted(
-      (a, b) => Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath),
+      (a, b) =>
+        Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath) ||
+        Number(guarded.hungBefore(a.path)) - Number(guarded.hungBefore(b.path)),
     );
     if (candidates.length === 0) {
       lastReason = "device not found";
@@ -231,17 +239,21 @@ async function poll(
     wired = candidates.some(isWired);
     // Asleep needs the dongle to be present now, not just on an earlier attempt.
     if (!candidates.some(isWireless)) deviceAsleep = false;
+    // Opening it could hang the HID work again before the other devices are opened. Right after a
+    // restart every device opens again, so the other interfaces on its link (the cable or the
+    // dongle), which may hang just the same, wait that round too.
+    const hung = (c: HidDeviceInfo) =>
+      guarded.quarantined(c.path) ||
+      (guarded.restarted() &&
+        candidates.some((o) => linkOf(o) === linkOf(c) && guarded.quarantined(o.path)));
+    skippedHung = candidates.some(hung);
 
     for (const candidate of candidates) {
       if (remaining() === 0) {
         lastReason = "poll timed out";
         break attempts;
       }
-      // Opening it could hang the HID work again before the other devices are opened.
-      if (guarded.quarantined(candidate.path)) {
-        lastReason = "device stopped responding";
-        continue;
-      }
+      if (hung(candidate)) continue;
       // A call that timed out earlier is still running on this link (the cable or the dongle), so
       // another would only hold another thread.
       if (candidates.some((c) => linkOf(c) === linkOf(candidate) && guarded.busy(c.path))) {
@@ -259,7 +271,9 @@ async function poll(
     }
   }
 
-  return !wired && deviceAsleep ? { kind: "asleep" } : { kind: "unavailable", reason: lastReason };
+  if (!wired && deviceAsleep) return { kind: "asleep" };
+  // Other interfaces failing says less than the one that hung.
+  return { kind: "unavailable", reason: skippedHung ? QUARANTINED : lastReason };
 }
 
 async function readFrom(
@@ -313,11 +327,15 @@ interface GuardedTransport extends HidTransport {
   busy(path: string): boolean;
   /** Whether this interface is left unopened this round because an open of it hung. */
   quarantined(path: string): boolean;
+  /** Whether an open of this interface hung since it last opened or left a listing. */
+  hungBefore(path: string): boolean;
+  /** Whether this round began with a restart. */
+  restarted(): boolean;
   /**
-   * Restarts the HID work if an open or listing from earlier is still running, since every new
-   * one would wait behind it, and quarantines the interfaces whose open hung.
+   * Calls `restart` if an open or listing from earlier is still running, since every new one would
+   * wait behind it, and quarantines the interfaces whose open hung.
    */
-  newRound(): void;
+  newRound(restart: () => void): void;
 }
 
 interface Quarantine {
@@ -347,15 +365,19 @@ interface Calls {
  */
 function guard(transport: HidTransport): GuardedTransport {
   let calls = freshCalls();
+  let restarted = false;
   // Keyed by path. Kept across restarts.
   const quarantine = new Map<string, Quarantine>();
 
   return {
     busy: (path) => calls.running.has(path),
     quarantined: (path) => (quarantine.get(path)?.roundsLeft ?? 0) > 0,
-    newRound: () => {
+    hungBefore: (path) => quarantine.has(path),
+    restarted: () => restarted,
+    newRound: (restart) => {
       for (const q of quarantine.values()) q.roundsLeft = Math.max(0, q.roundsLeft - 1);
-      if (calls.queued === 0 || !transport.restart) return;
+      restarted = calls.queued > 0;
+      if (!restarted) return;
       // Each hang doubles the rounds it is left alone: 1, 2, 4 and so on.
       for (const path of calls.opening) {
         const hangs = (quarantine.get(path)?.hangs ?? 0) + 1;
@@ -365,7 +387,7 @@ function guard(transport: HidTransport): GuardedTransport {
         });
       }
       calls = freshCalls();
-      transport.restart();
+      restart();
     },
     list: () => {
       const current = calls;
