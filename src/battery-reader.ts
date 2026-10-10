@@ -237,15 +237,14 @@ async function poll(
         lastReason = "poll timed out";
         break attempts;
       }
-      const sameLink = candidates.filter((c) => linkOf(c) === linkOf(candidate));
       // Opening it could hang the HID work again before the other devices are opened.
-      if (sameLink.some((c) => guarded.quarantined(c.path))) {
+      if (guarded.quarantined(candidate.path)) {
         lastReason = "device stopped responding";
         continue;
       }
       // A call that timed out earlier is still running on this link (the cable or the dongle), so
       // another would only hold another thread.
-      if (sameLink.some((c) => guarded.busy(c.path))) {
+      if (candidates.some((c) => linkOf(c) === linkOf(candidate) && guarded.busy(c.path))) {
         lastReason = "device is not responding";
         continue;
       }

@@ -769,6 +769,24 @@ describe("createBatteryPoller", () => {
     }
   });
 
+  it("still reads the dongle through another interface while one is quarantined", async () => {
+    const hid = hidProcess(
+      [
+        { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+        { productId: DONGLE_PRODUCT_ID, path: "control", respond: awake(255, false) },
+      ],
+      new Set(["stuck"]),
+    );
+    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+
+    await poll();
+
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
+    });
+  });
+
   it("opens an interface whose open hung again once it is plugged back in", async () => {
     const stuck = { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) };
     const devices: FakeDevice[] = [stuck];
