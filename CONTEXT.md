@@ -36,5 +36,5 @@ The separate process that does all HID work for the app: listing, opening, and t
 _Avoid_: Worker, helper
 
 **Quarantine**:
-The rounds in which a device's HID path is not opened because its last open hung, doubling from 1 to at most 15 after each hang. It ends when the path leaves a listing or gives a reading.
+The rounds in which a device's HID path is not opened because its last open hung, doubling from 1 to at most 15 after each hang. The doubling starts over when the path opens or leaves a listing.
 _Avoid_: Blacklist, cooldown

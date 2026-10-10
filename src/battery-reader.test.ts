@@ -717,6 +717,79 @@ describe("createBatteryPoller", () => {
     expect(hid.restarts).toBe(1);
   });
 
+  it("finds a device connected after another device's open hung", async () => {
+    const devices: FakeDevice[] = [
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+    ];
+    const hid = hidProcess(devices, new Set(["stuck"]));
+    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+
+    await poll();
+    devices.push({ productId: 0x00c1, path: "viper", respond: awake(255, false) });
+
+    // The hung open is not tried first again, so it cannot hold up opening the new device.
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "unavailable", reason: "device stopped responding" },
+        },
+        {
+          model: model("Viper V3 Pro"),
+          result: { kind: "reading", reading: { percent: 100, charging: false } },
+        },
+      ],
+    });
+  });
+
+  it("leaves an interface whose open keeps hanging alone for twice as many rounds each time", async () => {
+    const devices: FakeDevice[] = [
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
+    ];
+    const hid = hidProcess(devices, new Set(["stuck"]));
+    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+
+    const roundsOpened: number[] = [];
+    for (let round = 1; round <= 11; round++) {
+      const before = hid.opened.filter((path) => path === "stuck").length;
+      const result = await poll();
+      // After the first hang, the other device keeps being read, restarts included.
+      if (round > 1) {
+        expect(result).toMatchObject({
+          kind: "devices",
+          devices: [{}, { model: model("Viper V3 Pro"), result: { kind: "reading" } }],
+        });
+      }
+      if (hid.opened.filter((path) => path === "stuck").length > before) roundsOpened.push(round);
+    }
+
+    expect(roundsOpened).toEqual([1, 3, 6, 11]);
+  });
+
+  it("opens an interface whose open hung again once it is plugged back in", async () => {
+    const stuck = { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) };
+    const devices: FakeDevice[] = [stuck];
+    const hangs = new Set(["stuck"]);
+    const hid = hidProcess(devices, hangs);
+    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+
+    await poll();
+    await poll();
+    await poll();
+    // Hung twice, so it is left alone for the next two rounds.
+    devices.splice(0, 1);
+    hangs.clear();
+    await poll();
+    devices.push(stuck);
+
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
+    });
+  });
+
   it("restarts HID to list devices again when an earlier listing still hangs", async () => {
     let hung = true;
     const dongle = fakeTransport([
