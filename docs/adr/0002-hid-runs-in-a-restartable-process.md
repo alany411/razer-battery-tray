@@ -11,5 +11,5 @@ node-hid opens and lists devices one at a time behind a lock shared by the whole
 ## Consequences
 
 - A restart closes every handle, so all devices are opened again in that round.
-- A path whose open hung is quarantined so it cannot hang the new process before the other devices open.
+- An interface whose open hung is quarantined so it cannot hang the new process before the other devices open, and right after a restart so are the other interfaces on its cable or dongle.
 - A battery request that hangs does not cause a restart; that interface is left alone as before.
