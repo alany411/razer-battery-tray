@@ -752,20 +752,21 @@ describe("createBatteryPoller", () => {
     const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
 
     const roundsOpened: number[] = [];
+    const rounds = [];
     for (let round = 1; round <= 11; round++) {
       const before = hid.opened.filter((path) => path === "stuck").length;
-      const result = await poll();
-      // After the first hang, the other device keeps being read, restarts included.
-      if (round > 1) {
-        expect(result).toMatchObject({
-          kind: "devices",
-          devices: [{}, { model: model("Viper V3 Pro"), result: { kind: "reading" } }],
-        });
-      }
+      rounds.push(await poll());
       if (hid.opened.filter((path) => path === "stuck").length > before) roundsOpened.push(round);
     }
 
     expect(roundsOpened).toEqual([1, 3, 6, 11]);
+    // After the first hang, the other device keeps being read, restarts included.
+    for (const round of rounds.slice(1)) {
+      expect(round).toMatchObject({
+        kind: "devices",
+        devices: [{}, { model: model("Viper V3 Pro"), result: { kind: "reading" } }],
+      });
+    }
   });
 
   it("opens an interface whose open hung again once it is plugged back in", async () => {

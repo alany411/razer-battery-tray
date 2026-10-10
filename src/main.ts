@@ -1,13 +1,5 @@
 import { join } from "node:path";
-import {
-  Menu,
-  Notification,
-  Tray,
-  app,
-  nativeImage,
-  nativeTheme,
-  utilityProcess,
-} from "electron";
+import { Menu, Notification, Tray, app, nativeImage, nativeTheme, utilityProcess } from "electron";
 import type { NativeImage } from "electron";
 import { APP_ID } from "./app-id.js";
 import { createBatteryPoller } from "./battery-reader.js";
@@ -166,6 +158,8 @@ function forkHidProcess(onMessage: (message: HidMessage) => void, onExit: () => 
   child.on("message", onMessage);
   child.on("exit", onExit);
   return {
+    // A utility process takes no target origin, unlike a window.
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin
     post: (request) => child.postMessage(request),
     kill: () => void child.kill(),
   };

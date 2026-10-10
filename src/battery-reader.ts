@@ -27,7 +27,9 @@ export interface DevicePoll {
 }
 
 /** A poll of each connected device. `reason` says why listing devices failed, if it did. */
-export type PollRound = { kind: "devices"; devices: DevicePoll[] } | { kind: "none"; reason?: string };
+export type PollRound =
+  | { kind: "devices"; devices: DevicePoll[] }
+  | { kind: "none"; reason?: string };
 
 export interface HidDeviceInfo {
   productId: number;
@@ -345,25 +347,9 @@ interface Calls {
  * restarts at the next round, and `busy` tells which interfaces to leave alone.
  */
 function guard(transport: HidTransport): GuardedTransport {
-  const fresh = (): Calls => ({ running: new Map(), handles: new Map(), opening: new Set(), queued: 0 });
-  let calls = fresh();
+  let calls = freshCalls();
   // Keyed by path. Kept across restarts.
   const quarantine = new Map<string, Quarantine>();
-
-  const track = <T>({ running }: Calls, path: string, call: Promise<T>): Promise<T> => {
-    running.set(path, (running.get(path) ?? 0) + 1);
-    settled(call, () => {
-      const left = (running.get(path) ?? 1) - 1;
-      if (left === 0) running.delete(path);
-      else running.set(path, left);
-    });
-    return call;
-  };
-  const inQueue = <T>(current: Calls, call: Promise<T>): Promise<T> => {
-    current.queued++;
-    settled(call, () => current.queued--);
-    return call;
-  };
 
   return {
     busy: (path) => calls.running.has(path),
@@ -379,7 +365,7 @@ function guard(transport: HidTransport): GuardedTransport {
           roundsLeft: Math.min(2 ** (hangs - 1), MAX_QUARANTINE_ROUNDS),
         });
       }
-      calls = fresh();
+      calls = freshCalls();
       transport.restart();
     },
     list: () => {
@@ -431,6 +417,28 @@ function guard(transport: HidTransport): GuardedTransport {
       return handle;
     },
   };
+}
+
+function freshCalls(): Calls {
+  return { running: new Map(), handles: new Map(), opening: new Set(), queued: 0 };
+}
+
+/** Counts `call` as running on this interface until it settles. */
+function track<T>({ running }: Calls, path: string, call: Promise<T>): Promise<T> {
+  running.set(path, (running.get(path) ?? 0) + 1);
+  settled(call, () => {
+    const left = (running.get(path) ?? 1) - 1;
+    if (left === 0) running.delete(path);
+    else running.set(path, left);
+  });
+  return call;
+}
+
+/** Counts an open or listing as holding up any new one until it settles. */
+function inQueue<T>(calls: Calls, call: Promise<T>): Promise<T> {
+  calls.queued++;
+  settled(call, () => calls.queued--);
+  return call;
 }
 
 /** Runs `done` once `call` settles, either way. */

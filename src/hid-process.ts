@@ -51,7 +51,10 @@ export function serveHid(
       case "open": {
         const handle = await transport.open(request.path);
         // Opened again after a timeout in the main process, which closed the one before.
-        void handles.get(request.path)?.close().catch(() => {});
+        void handles
+          .get(request.path)
+          ?.close()
+          .catch(() => {});
         handles.set(request.path, handle);
         return undefined;
       }
