@@ -13,7 +13,7 @@ A Windows 11 tray app that shows the battery percentage of Razer wireless mice a
 
 Razer Synapse can occasionally get in the way of reads. Once a device is found, the app retries it for up to 10 seconds and shows **Unavailable** if it still cannot read its battery. Finding devices has its own 10-second limit, so a refresh takes at most about 20 seconds.
 
-If a device stops answering while being opened, node-hid holds up every later open and device listing until it does. Devices already open keep updating, and their menus say devices cannot be listed again; newly connected devices appear once the stuck request clears.
+If a device stops answering while being opened, node-hid holds up every later open and device listing behind it. The app does its HID work in a separate HID process, so at the next read it restarts that process, which picks up newly connected and unplugged devices again. The device that stopped answering shows **Unavailable** (device stopped responding) and is left unopened for a few reads, longer each time it hangs again, so it cannot hold up the others; unplugging and replugging it tries it again right away (see `docs/adr/0002-hid-runs-in-a-restartable-process.md`).
 
 ## Supported devices
 
