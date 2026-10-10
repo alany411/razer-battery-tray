@@ -69,6 +69,39 @@ const options = { sleep: async () => {} };
 
 const hang = () => new Promise<never>(() => {});
 
+/**
+ * A fake HID process: an open of a path in `hangs` never returns, and holds up every later open and
+ * listing until the process restarts, which ends them.
+ */
+function hidProcess(devices: FakeDevice[], hangs: Set<string>) {
+  const inner = fakeTransport(devices);
+  let ended: (() => void)[] = [];
+  let locked = false;
+  const waitForRestart = () =>
+    new Promise<never>((_, reject) => {
+      ended.push(() => reject(new Error("HID process restarted")));
+    });
+  const process = {
+    opened: inner.opened,
+    restarts: 0,
+    list: () => (locked ? waitForRestart() : inner.list()),
+    open: (path: string) => {
+      if (locked) return waitForRestart();
+      if (!hangs.has(path)) return inner.open(path);
+      inner.opened.push(path);
+      locked = true;
+      return waitForRestart();
+    },
+    restart: () => {
+      process.restarts++;
+      locked = false;
+      for (const end of ended) end();
+      ended = [];
+    },
+  };
+  return process satisfies HidTransport;
+}
+
 describe("pollBattery", () => {
   it("reads the percentage and charging flag through the dongle", async () => {
     const transport = fakeTransport([
@@ -633,45 +666,6 @@ describe("createBatteryPoller", () => {
     expect(transport.opened).toEqual(["first"]);
   });
 
-  it("keeps reading open devices while another device's open hangs", async () => {
-    // node-hid opens and lists one at a time, so a hung open holds up every later open and list.
-    let hungOpen = false;
-    let listed: FakeDevice[] = [{ productId: 0x00c1, path: "viper", respond: awake(255, false) }];
-    const devices = fakeTransport([
-      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
-      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
-    ]);
-    const transport: HidTransport = {
-      list: () => (hungOpen ? hang() : Promise.resolve(listed)),
-      open: (path) => {
-        if (hungOpen) return hang();
-        if (path === "stuck") {
-          hungOpen = true;
-          return hang();
-        }
-        return devices.open(path);
-      },
-    };
-    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
-
-    await poll();
-    listed = [
-      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
-      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
-    ];
-    const rounds = [await poll(), await poll()];
-
-    for (const round of rounds) {
-      expect(round).toMatchObject({
-        kind: "devices",
-        devices: [
-          { model: model("Viper V3 Pro"), result: { kind: "reading" } },
-          { model: DEATHADDER_V3_PRO, result: { kind: "unavailable" } },
-        ],
-      });
-    }
-  });
-
   it("still reads the cable while a dongle call hangs", async () => {
     let cable = false;
     const devices = fakeTransport([
@@ -701,42 +695,51 @@ describe("createBatteryPoller", () => {
     });
   });
 
-  it("keeps showing an asleep device as asleep while another device's open hangs", async () => {
-    let hungOpen = false;
-    const viper = { productId: 0x00c1, path: "viper", respond: () => ({ status: 0x04 }) };
-    let listed: FakeDevice[] = [viper];
-    const devices = fakeTransport([
-      viper,
+  it("restarts HID to drop an unplugged device while another device's open hangs", async () => {
+    // node-hid opens and lists one at a time, so a hung open holds up every later open and list.
+    const devices: FakeDevice[] = [
+      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
       { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+    ];
+    const hid = hidProcess(devices, new Set(["stuck"]));
+    const poll = createBatteryPoller(hid, { ...options, timeoutMs: 5 });
+
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ model: model("Viper V3 Pro"), result: { kind: "reading" } }, {}],
+    });
+    devices.splice(0, 1);
+
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "unavailable" } }],
+    });
+    expect(hid.restarts).toBe(1);
+  });
+
+  it("restarts HID to list devices again when an earlier listing still hangs", async () => {
+    let hung = true;
+    const dongle = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
     ]);
     const transport: HidTransport = {
-      list: () => (hungOpen ? hang() : Promise.resolve(listed)),
-      open: (path) => {
-        if (hungOpen) return hang();
-        if (path === "stuck") {
-          hungOpen = true;
-          return hang();
-        }
-        return devices.open(path);
+      list: () => (hung ? hang() : dongle.list()),
+      open: dongle.open,
+      restart: () => {
+        hung = false;
       },
     };
     const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
 
-    await poll();
-    listed = [viper, { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) }];
-    const rounds = [await poll(), await poll()];
+    expect(await poll()).toMatchObject({ kind: "none" });
 
-    for (const round of rounds) {
-      expect(round).toMatchObject({
-        kind: "devices",
-        devices: [{ model: model("Viper V3 Pro"), result: { kind: "asleep" } }, {}],
-      });
-    }
-    // Listing waits behind the hung open, so the last listing is used and may be out of date.
-    expect(rounds[1]).toMatchObject({ stale: true });
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
+    });
   });
 
-  it("does not list devices again while an earlier listing still hangs", async () => {
+  it("does not list devices again while an earlier listing still hangs and HID cannot restart", async () => {
     let lists = 0;
     const transport: HidTransport = {
       list: () => {
