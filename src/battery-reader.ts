@@ -223,14 +223,17 @@ async function poll(
       lastReason = errorMessage(error);
       continue;
     }
-    // Prefer the cable: when it is plugged in it answers even if the dongle is also present.
-    // Then the interface that answered last time. Any whose open hung before goes last, so if it
-    // hangs again the others have had their turn.
-    const candidates = [...interfaces.filter(isWired), ...interfaces.filter(isWireless)].toSorted(
-      (a, b) =>
-        Number(guarded.hungBefore(a.path)) - Number(guarded.hungBefore(b.path)) ||
-        Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath),
-    );
+    // Any interface whose open hung before goes last, so if it hangs again the others have had
+    // their turn. Then prefer the cable: when it is plugged in it answers even if the dongle is also
+    // present. Then the interface that answered last time.
+    const candidates = interfaces
+      .filter((i) => linkOf(i) !== undefined)
+      .toSorted(
+        (a, b) =>
+          Number(guarded.hungBefore(a.path)) - Number(guarded.hungBefore(b.path)) ||
+          Number(isWired(b)) - Number(isWired(a)) ||
+          Number(b.path === memory.lastPath) - Number(a.path === memory.lastPath),
+      );
     if (candidates.length === 0) {
       lastReason = "device not found";
       deviceAsleep = false;

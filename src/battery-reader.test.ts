@@ -552,6 +552,32 @@ describe("createBatteryPoller", () => {
     expect(transport.opened).toEqual(["stuck", "control"]);
   });
 
+  it("reads through the cable once it is plugged in, even though the dongle answered last", async () => {
+    let cable = false;
+    const devices = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+      { productId: WIRED_PRODUCT_ID, path: "wired", respond: awake(128, true) },
+    ]);
+    const transport: HidTransport = {
+      list: async () => (await devices.list()).filter((i) => cable || i.path === "dongle"),
+      open: devices.open,
+    };
+    const poll = poller(transport, options);
+
+    await poll();
+    cable = true;
+
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "reading", reading: { percent: 50, charging: true } },
+        },
+      ],
+    });
+  });
+
   it("polls every connected device in the table", async () => {
     const transport = fakeTransport([
       { productId: DONGLE_PRODUCT_ID, path: "mouse", respond: awake(255, false) },
