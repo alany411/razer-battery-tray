@@ -1135,7 +1135,9 @@ describe("createBatteryPoller", () => {
 
     expect(await poll()).toEqual({
       kind: "devices",
-      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "unavailable", reason: "device not found" } }],
+      devices: [
+        { model: DEATHADDER_V3_PRO, result: { kind: "unavailable", reason: "device not found" } },
+      ],
     });
   });
 
@@ -1245,6 +1247,10 @@ describe("createBatteryPoller", () => {
   it("restarts HID and quarantines an interface once a request on it has hung for 3 rounds", async () => {
     let hung = true;
     let ended: (() => void)[] = [];
+    const untilRestart = () =>
+      new Promise<never>((_, reject) => {
+        ended.push(() => reject(new Error("HID process restarted")));
+      });
     const devices = fakeTransport([
       { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
       { productId: 0x00c1, path: "viper", respond: awake(255, false) },
@@ -1254,12 +1260,7 @@ describe("createBatteryPoller", () => {
       list: devices.list,
       open: async (path: string): Promise<HidHandle> => {
         const handle = await devices.open(path);
-        if (path !== "stuck" || !hung) return handle;
-        const getFeatureReport = () =>
-          new Promise<never>((_, reject) => {
-            ended.push(() => reject(new Error("HID process restarted")));
-          });
-        return { ...handle, getFeatureReport };
+        return path === "stuck" && hung ? { ...handle, getFeatureReport: untilRestart } : handle;
       },
       restart: () => {
         transport.restarts++;
@@ -1279,11 +1280,17 @@ describe("createBatteryPoller", () => {
     };
 
     for (let round = 1; round <= 3; round++) {
-      expect(await deathAdder()).toEqual({ kind: "unavailable", reason: "device is not responding" });
+      expect(await deathAdder()).toEqual({
+        kind: "unavailable",
+        reason: "device is not responding",
+      });
     }
     expect(transport.restarts).toBe(0);
 
-    expect(await deathAdder()).toEqual({ kind: "unavailable", reason: "device stopped responding" });
+    expect(await deathAdder()).toEqual({
+      kind: "unavailable",
+      reason: "device stopped responding",
+    });
     expect(transport.restarts).toBe(1);
 
     expect(await deathAdder()).toEqual({

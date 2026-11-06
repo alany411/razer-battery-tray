@@ -86,20 +86,20 @@ function countingDongle() {
   return { transport, closed };
 }
 
-describe("serveHid", () => {
-  const serve = (transport: HidTransport) => {
-    const replies: HidMessage[] = [];
-    const handle = serveHid(transport, (message) => replies.push(message));
-    let id = 0;
-    const send = async (request: HidCall) => {
-      const sent = id++;
-      handle({ id: sent, request });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      return replies.find((reply) => reply.kind === "reply" && reply.id === sent);
-    };
-    return send;
+/** Serves `transport` as the HID process would; `send` makes a call and gives its reply. */
+function serve(transport: HidTransport) {
+  const replies: HidMessage[] = [];
+  const handle = serveHid(transport, (message) => replies.push(message));
+  let id = 0;
+  return async (request: HidCall) => {
+    const sent = id++;
+    handle({ id: sent, request });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return replies.find((reply) => reply.kind === "reply" && reply.id === sent);
   };
+}
 
+describe("serveHid", () => {
   it("closes the handle it held when a path is opened again", async () => {
     const { transport, closed } = countingDongle();
     const send = serve(transport);
@@ -118,9 +118,9 @@ describe("serveHid", () => {
     await send({ call: "close", path: DONGLE.path });
 
     expect(closed).toEqual([0]);
-    expect(await send({ call: "getFeatureReport", path: DONGLE.path, reportId: 0, length: 91 })).toEqual(
-      expect.objectContaining({ ok: false, error: "device is not open" }),
-    );
+    expect(
+      await send({ call: "getFeatureReport", path: DONGLE.path, reportId: 0, length: 91 }),
+    ).toEqual(expect.objectContaining({ ok: false, error: "device is not open" }));
   });
 });
 

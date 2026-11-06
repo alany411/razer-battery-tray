@@ -603,7 +603,12 @@ function inTurn<T>(
 }
 
 /** Counts `call` as running on this interface until it settles, and as old after `timeoutMs`. */
-function track<T>({ running }: Calls, path: string, timeoutMs: number, call: Promise<T>): Promise<T> {
+function track<T>(
+  { running }: Calls,
+  path: string,
+  timeoutMs: number,
+  call: Promise<T>,
+): Promise<T> {
   const entry: RunningCall = { old: false };
   const onPath = running.get(path) ?? new Set();
   running.set(path, onPath.add(entry));
