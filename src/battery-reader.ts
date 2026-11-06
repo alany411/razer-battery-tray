@@ -81,7 +81,7 @@ const RESPONSE_DELAY_MS = 50;
 const HID_TIMEOUT_MS = 2_000;
 // Keeps Refresh now responsive (at most twice this per round) even when every interface is stuck.
 const POLL_DEADLINE_MS = 10_000;
-/** The most rounds in a row an interface whose open hung is left unopened. */
+/** The most rounds in a row an interface in quarantine is left unopened. */
 const MAX_QUARANTINE_ROUNDS = 15;
 /**
  * Rounds in a row a request may stay hung before the HID work restarts. A hung request holds only
@@ -243,8 +243,8 @@ async function poll(
       lastReason = errorMessage(error);
       continue;
     }
-    // Any interface whose open hung before goes last, so if it hangs again the others have had
-    // their turn. Then prefer the cable: when it is plugged in it answers even if the dongle is also
+    // Any interface that hung before (its open or a request on it) goes last, so if it hangs again
+    // the others have had their turn. Then prefer the cable: when it is plugged in it answers even if the dongle is also
     // present. Then the interface that answered last time.
     const candidates = interfaces
       .filter((i) => linkOf(i) !== undefined)
