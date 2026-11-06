@@ -31,6 +31,10 @@ _Avoid_: Disconnected, offline
 No reading could be taken after all retries or within the poll's 10-second limit (requests kept failing, or the poll ran out of time). With no device found at all, the app shows a single **No Razer device found** icon that looks like Unavailable. If listing devices fails, the devices found last time stay and show Unavailable. A device shows Unavailable, with the reason "device stopped responding", when an interface of it is in quarantine and no other interface gives a reading.
 _Avoid_: Error state
 
+**Low-battery alert**:
+The one notification sent when a device's battery reading drops to or below a threshold (20% or 10%) while not charging; a reading that drops past both gives one, for the lower. A threshold can alert again only after a reading more than 3 points above it, charging or not.
+_Avoid_: Warning, low-battery notification
+
 **Interface**:
 One HID path of a device's connection, which node-hid opens and lists. A dongle often has several, of which one answers battery requests.
 _Avoid_: Endpoint, path (outside the code)

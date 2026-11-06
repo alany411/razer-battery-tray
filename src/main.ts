@@ -146,11 +146,9 @@ function trayIcon({ iconText, tone }: TrayDisplay): NativeImage {
 function notifyIfLow(name: string, reading: BatteryReading): void {
   let deviceAlerts = alerts.get(name);
   if (!deviceAlerts) alerts.set(name, (deviceAlerts = new LowBatteryAlerts()));
-  const thresholds = deviceAlerts.update(reading);
-  if (!Notification.isSupported()) return;
-  for (const threshold of thresholds) {
-    new Notification(describeLowBattery(name, threshold, reading)).show();
-  }
+  const threshold = deviceAlerts.update(reading);
+  if (threshold === undefined || !Notification.isSupported()) return;
+  new Notification(describeLowBattery(name, threshold, reading)).show();
 }
 
 function forkHidProcess(onMessage: (message: HidMessage) => void, onExit: () => void): HidProcess {

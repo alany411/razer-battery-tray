@@ -4,34 +4,77 @@ import type { BatteryReading } from "./battery-reader.js";
 
 const at = (percent: number, charging = false): BatteryReading => ({ percent, charging });
 
-function feed(alerts: LowBatteryAlerts, readings: BatteryReading[]): number[][] {
+function feed(alerts: LowBatteryAlerts, readings: BatteryReading[]): (number | undefined)[] {
   return readings.map((reading) => alerts.update(reading));
 }
 
 describe("LowBatteryAlerts", () => {
   it("alerts once at 20% and once at 10%", () => {
     expect(feed(new LowBatteryAlerts(), [at(25), at(20), at(18), at(10), at(5)])).toEqual([
-      [],
-      [20],
-      [],
-      [10],
-      [],
+      undefined,
+      20,
+      undefined,
+      10,
+      undefined,
     ]);
   });
 
-  it("alerts for both thresholds when one reading crosses both", () => {
-    expect(feed(new LowBatteryAlerts(), [at(25), at(8), at(7)])).toEqual([[], [20, 10], []]);
+  it("alerts only for the lowest threshold when one reading crosses both", () => {
+    expect(feed(new LowBatteryAlerts(), [at(8), at(7)])).toEqual([10, undefined]);
   });
 
-  it("re-arms after the battery rises above the threshold", () => {
-    expect(feed(new LowBatteryAlerts(), [at(20), at(21), at(19)])).toEqual([[20], [], [20]]);
+  it("does not alert for the higher threshold after alerting for the lower", () => {
+    expect(feed(new LowBatteryAlerts(), [at(8), at(12), at(18)])).toEqual([
+      10,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("does not re-arm on a wobble just above the threshold", () => {
+    expect(feed(new LowBatteryAlerts(), [at(21), at(20), at(21), at(20)])).toEqual([
+      undefined,
+      20,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("re-arms once the battery rises above threshold + 3", () => {
+    expect(feed(new LowBatteryAlerts(), [at(20), at(23), at(20), at(24), at(20)])).toEqual([
+      20,
+      undefined,
+      undefined,
+      undefined,
+      20,
+    ]);
   });
 
   it("does not re-arm while still at the threshold", () => {
-    expect(feed(new LowBatteryAlerts(), [at(19), at(20), at(19)])).toEqual([[20], [], []]);
+    expect(feed(new LowBatteryAlerts(), [at(19), at(20), at(19)])).toEqual([
+      20,
+      undefined,
+      undefined,
+    ]);
   });
 
-  it("alerts while charging too", () => {
-    expect(feed(new LowBatteryAlerts(), [at(15, true), at(15)])).toEqual([[20], []]);
+  it("stays silent while charging and alerts once unplugged", () => {
+    expect(feed(new LowBatteryAlerts(), [at(15, true), at(15)])).toEqual([undefined, 20]);
+  });
+
+  it("does not re-arm while charging below threshold + 3", () => {
+    expect(feed(new LowBatteryAlerts(), [at(19), at(18, true), at(18)])).toEqual([
+      20,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("re-arms while charging above threshold + 3", () => {
+    expect(feed(new LowBatteryAlerts(), [at(19), at(24, true), at(19)])).toEqual([
+      20,
+      undefined,
+      20,
+    ]);
   });
 });
