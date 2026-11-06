@@ -25,18 +25,18 @@ describe("parseRegValue", () => {
   });
 });
 
+/** A fake exec that records its call and answers like execFile would. */
+function fakeExec(error: Error | null, stdout = "") {
+  const calls: { file: string; args: readonly string[]; timeout?: number }[] = [];
+  const exec: RegExec = (file, args, options, callback) => {
+    calls.push({ file, args, timeout: options.timeout });
+    callback(error, stdout);
+  };
+  return { exec, calls };
+}
+
 describe("queryRegValue", () => {
   afterEach(() => vi.unstubAllEnvs());
-
-  /** A fake exec that records its call and answers like execFile would. */
-  function fakeExec(error: Error | null, stdout = "") {
-    const calls: { file: string; args: readonly string[]; timeout?: number }[] = [];
-    const exec: RegExec = (file, args, options, callback) => {
-      calls.push({ file, args, timeout: options.timeout });
-      callback(error, stdout);
-    };
-    return { exec, calls };
-  }
 
   it("resolves to undefined when reg times out", async () => {
     const timedOut = Object.assign(new Error("spawnSync reg.exe ETIMEDOUT"), {
