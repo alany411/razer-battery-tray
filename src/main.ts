@@ -127,6 +127,8 @@ function show(next: ReadonlyMap<string, TrayDisplay>): void {
   displays = next;
   for (const [key, tray] of trays) {
     if (next.has(key)) continue;
+    // Its menu may never report closing once the tray is gone.
+    if (tray === menuTray) menuTray = undefined;
     tray.destroy();
     trays.delete(key);
   }
@@ -157,20 +159,27 @@ function createTray(key: string, image: NativeImage): Tray {
   }
 }
 
-// Only one menu at a time, so a quick second right-click does not queue another.
-let menuOpen = false;
+// The tray whose menu is open: only one menu at a time, so a quick second right-click does not
+// queue another.
+let menuTray: Tray | undefined;
 
 function onRightClick(tray: Tray, key: string): void {
   // Built from cached state, so the menu opens without waiting on the registry or a disk scan.
   tray.on("right-click", () => {
     const display = displays.get(key);
-    if (menuOpen || !display || tray.isDestroyed()) return;
+    if (menuTray || !display || tray.isDestroyed()) return;
     const contextMenu = menu(display);
-    menuOpen = true;
+    menuTray = tray;
     contextMenu.once("menu-will-close", () => {
-      menuOpen = false;
+      if (menuTray === tray) menuTray = undefined;
     });
-    tray.popUpContextMenu(contextMenu);
+    try {
+      tray.popUpContextMenu(contextMenu);
+    } catch (error) {
+      // Otherwise no tray would open a menu again, Quit included.
+      menuTray = undefined;
+      console.warn("Could not open the tray menu:", error);
+    }
   });
 }
 
