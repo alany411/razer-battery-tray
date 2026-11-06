@@ -1,6 +1,6 @@
 # HID runs in a restartable process
 
-node-hid opens and lists devices one at a time behind a lock shared by the whole process, and a hung open (e.g. a confused dongle after resume) never returns, so every later open and listing waits behind it until the app restarts. All HID work therefore runs in an Electron `utilityProcess`, the HID process, which the main process kills and restarts at the start of a round when an open or listing from an earlier round is still running. The battery polling logic stays in the main process and talks to it through a `HidTransport` over a message port, so a restart keeps poll memory, low-battery alert state and tray icons.
+node-hid opens and lists devices one at a time behind a lock shared by the whole process, and a hung open (e.g. a confused dongle after resume) never returns, so every later open and listing waits behind it until the app restarts. All HID work therefore runs in an Electron `utilityProcess`, the HID process, which the main process kills and restarts at the start of a round when an open or listing from an earlier round has been running for at least the HID timeout; a younger one is left to finish. The battery polling logic stays in the main process and talks to it through a `HidTransport` over a message port, so a restart keeps poll memory, low-battery alert state and tray icons.
 
 ## Considered Options
 
@@ -11,5 +11,6 @@ node-hid opens and lists devices one at a time behind a lock shared by the whole
 ## Consequences
 
 - A restart closes every handle, so all devices are opened again in that round.
+- The main process starts one open or listing at a time from a queue, and a new one waits its turn (up to the HID timeout) instead of failing, so devices that open in the same round do not use up each other's retries. A wait that times out leaves the queue and never starts its call.
 - An interface whose open hung is quarantined so it cannot hang the new process before the other devices open, and right after a restart so are the other interfaces on its cable or dongle.
 - A battery request that hangs does not cause a restart; that interface is left alone as before.
