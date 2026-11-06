@@ -58,7 +58,23 @@ describe("LowBatteryAlerts", () => {
     ]);
   });
 
-  it("alerts while charging too", () => {
-    expect(feed(new LowBatteryAlerts(), [at(15, true), at(15)])).toEqual([20, undefined]);
+  it("stays silent while charging and alerts once unplugged", () => {
+    expect(feed(new LowBatteryAlerts(), [at(15, true), at(15)])).toEqual([undefined, 20]);
+  });
+
+  it("does not re-arm while charging below threshold + 3", () => {
+    expect(feed(new LowBatteryAlerts(), [at(19), at(18, true), at(18)])).toEqual([
+      20,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("re-arms while charging above threshold + 3", () => {
+    expect(feed(new LowBatteryAlerts(), [at(19), at(24, true), at(19)])).toEqual([
+      20,
+      undefined,
+      20,
+    ]);
   });
 });
