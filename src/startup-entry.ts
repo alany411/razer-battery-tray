@@ -35,6 +35,9 @@ export function startsAtLogin(
 function launches(run: string, exePath: string): boolean {
   const data = run.toLowerCase();
   const exe = exePath.toLowerCase();
-  if (data.startsWith('"')) return data.slice(1, data.indexOf('"', 1)) === exe;
+  if (data.startsWith('"')) {
+    const end = data.indexOf('"', 1);
+    return end !== -1 && data.slice(1, end) === exe;
+  }
   return data === exe || data.startsWith(`${exe} `);
 }

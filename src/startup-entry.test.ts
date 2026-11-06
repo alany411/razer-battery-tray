@@ -45,4 +45,8 @@ describe("startsAtLogin", () => {
   it("is off when an unquoted run entry only starts with this path", () => {
     expect(startsAtLogin(`${EXE}.old`, undefined, EXE)).toBe(false);
   });
+
+  it("is off when quoted run data has no closing quote", () => {
+    expect(startsAtLogin(`"${EXE}X`, undefined, EXE)).toBe(false);
+  });
 });
