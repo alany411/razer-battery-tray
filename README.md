@@ -35,4 +35,6 @@ pnpm dist           # Windows x64 NSIS installer in release/
 
 `pnpm dist` must run on Windows. On Linux, electron-builder needs wine to build the NSIS installer.
 
+Toast notifications (low battery) only appear from the installed build: Windows shows them only for an AppUserModelID with a Start menu shortcut, which the installer creates. They don't show under `pnpm start`.
+
 See `CONTEXT.md` for the glossary.
