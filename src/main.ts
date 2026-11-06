@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { Menu, Notification, Tray, app, nativeImage, nativeTheme, utilityProcess } from "electron";
 import type { NativeImage } from "electron";
 import { APP_ID } from "./app-id.js";
+import { cachedValue } from "./cached-value.js";
 import { createBatteryPoller } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
 import { remoteHidTransport } from "./hid-process.js";
@@ -27,6 +28,9 @@ const pollBattery = createBatteryPoller(remoteHidTransport(forkHidProcess));
 const trays = new Map<string, Tray>();
 let taskbar: Taskbar = "dark";
 let displays: ReadonlyMap<string, TrayDisplay> = READING_DISPLAYS;
+// What the menu shows, read at start and after each poll instead of as the menu opens.
+const startsAtLogin = cachedValue(false, () => readStartsAtLogin(APP_ID, process.execPath));
+const synapseLauncher = cachedValue<SynapseLauncher | undefined>(undefined, findSynapse);
 
 if (app.requestSingleInstanceLock()) {
   app.setAppUserModelId(APP_ID);
@@ -37,6 +41,7 @@ if (app.requestSingleInstanceLock()) {
 
 function start(): void {
   show(displays);
+  refreshMenuState();
 
   // Redraw in the taskbar's colours when Windows switches between light and dark.
   nativeTheme.on("updated", () => void followTaskbar());
@@ -66,6 +71,7 @@ const poll = rerunQueue(async () => {
     if (result.kind === "reading") notifyIfLow(model.name, result.reading);
   }
   show(describeRound(round));
+  refreshMenuState();
 });
 
 /** Gives each display its own tray icon, removing icons for devices no longer listed. */
@@ -103,25 +109,25 @@ function createTray(key: string, image: NativeImage): Tray {
   }
 }
 
+// Only one menu at a time, so a quick second right-click does not queue another.
+let menuOpen = false;
+
 function onRightClick(tray: Tray, key: string): void {
-  // Build the menu as it opens, so the Start with Windows checkbox is never stale.
+  // Built from cached state, so the menu opens without waiting on the registry or a disk scan.
   tray.on("right-click", () => {
-    void Promise.all([readStartsAtLogin(APP_ID, process.execPath), findSynapse()]).then(
-      ([startsAtLogin, synapse]) => {
-        const display = displays.get(key);
-        if (display && !tray.isDestroyed()) {
-          tray.popUpContextMenu(menu(display, startsAtLogin, synapse));
-        }
-      },
-    );
+    const display = displays.get(key);
+    if (menuOpen || !display || tray.isDestroyed()) return;
+    const contextMenu = menu(display);
+    menuOpen = true;
+    contextMenu.once("menu-will-close", () => {
+      menuOpen = false;
+    });
+    tray.popUpContextMenu(contextMenu);
   });
 }
 
-function menu(
-  display: TrayDisplay,
-  startsAtLogin: boolean,
-  synapse: SynapseLauncher | undefined,
-): Menu {
+function menu(display: TrayDisplay): Menu {
+  const synapse = synapseLauncher.get();
   return Menu.buildFromTemplate([
     { label: display.tooltip, enabled: false },
     ...(display.detail ? [{ label: display.detail, enabled: false }] : []),
@@ -135,14 +141,23 @@ function menu(
     {
       label: "Start with Windows",
       type: "checkbox",
-      checked: startsAtLogin,
+      checked: startsAtLogin.get(),
       // A dev run would write a Run entry that launches the dev electron.exe.
       enabled: app.isPackaged,
-      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+      click: (item) => {
+        app.setLoginItemSettings({ openAtLogin: item.checked });
+        startsAtLogin.set(item.checked);
+      },
     },
     { type: "separator" },
     { label: "Quit", role: "quit" },
   ]);
+}
+
+/** Reads what the menu shows again in the background. */
+function refreshMenuState(): void {
+  void startsAtLogin.refresh();
+  void synapseLauncher.refresh();
 }
 
 function trayIcon({ iconText, tone }: TrayDisplay): NativeImage {
