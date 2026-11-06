@@ -4,7 +4,10 @@ export const ALERT_THRESHOLDS = [20, 10] as const;
 /** How far above a threshold the battery must rise before it can alert again. */
 const REARM_MARGIN = 3;
 
-/** Decides when to warn about a low battery: once per threshold until it recharges past it by REARM_MARGIN, and never while charging. */
+/**
+ * Decides when to send a low-battery alert: once per threshold until a reading rises more than
+ * REARM_MARGIN above it, and never while charging.
+ */
 export class LowBatteryAlerts {
   private readonly armed: Map<number, boolean>;
 
