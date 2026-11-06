@@ -6,10 +6,11 @@ A Windows 11 tray app that shows the battery percentage of Razer wireless mice a
 - The tooltip and menu show the model, percentage and charging state, or **Asleep** when the dongle is plugged in but the device does not answer (or reports 0% while not charging).
 - With no supported device connected, a single icon shows **No Razer device found**. A device's icon goes away when it is unplugged.
 - A low-battery alert appears once per device when its battery drops to 20% and again at 10%, but not while it is charging. If one reading is already at 10% or below (the first reading, or a device waking up), only the 10% alert appears. A threshold alerts again only after the battery has risen more than 3 points above it (to 24% or 14%), so a reading that wobbles around 20% does not alert each time.
-- Batteries are read every 60 seconds. **Refresh now** in any menu reads them all immediately.
+- Batteries are read every 60 seconds, and 5 seconds after the PC wakes from sleep or the screen is unlocked. **Refresh now** in any menu reads them all immediately.
 - **Open Synapse** in the menu opens Razer Synapse, the same way as its Start menu shortcut. It is greyed out if Synapse is not installed.
 - **Start with Windows** in the menu launches the app at login (installed builds only; it is disabled under `pnpm start`).
-- Right-click any tray icon to open its menu. Launching the app again while it runs does nothing, so only one copy of the app runs.
+- Right-click any tray icon to open its menu. Whether Synapse is installed and whether the app starts with Windows are checked at launch and after each read, so the menu opens at once. Launching the app again while it runs does nothing, so only one copy of the app runs.
+- Each icon keeps the show or hide choice made in Windows' taskbar settings across unplugging, replugging and restarts. Moving the installed app resets it (see `docs/adr/0003-stable-tray-guids.md`).
 
 Razer Synapse can occasionally get in the way of reads. Once a device is found, the app retries it for up to 10 seconds and shows **Unavailable** if it still cannot read its battery. Finding devices has its own 10-second limit, so a refresh takes at most about 20 seconds.
 
