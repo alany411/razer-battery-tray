@@ -1,8 +1,10 @@
 import type { BatteryReading } from "./battery-reader.js";
 
 export const ALERT_THRESHOLDS = [20, 10] as const;
+/** How far above a threshold the battery must rise before it can alert again. */
+const REARM_MARGIN = 3;
 
-/** Decides when to warn about a low battery: once per threshold until it recharges above it. */
+/** Decides when to warn about a low battery: once per threshold until it recharges past it by REARM_MARGIN. */
 export class LowBatteryAlerts {
   private readonly armed: Map<number, boolean>;
 
@@ -14,9 +16,9 @@ export class LowBatteryAlerts {
   update(reading: BatteryReading): number[] {
     const alerts: number[] = [];
     for (const [threshold, armed] of this.armed) {
-      if (reading.percent > threshold) {
+      if (reading.percent > threshold + REARM_MARGIN) {
         this.armed.set(threshold, true);
-      } else if (armed) {
+      } else if (armed && reading.percent <= threshold) {
         alerts.push(threshold);
         this.armed.set(threshold, false);
       }

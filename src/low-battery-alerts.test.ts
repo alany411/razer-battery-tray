@@ -23,8 +23,23 @@ describe("LowBatteryAlerts", () => {
     expect(feed(new LowBatteryAlerts(), [at(25), at(8), at(7)])).toEqual([[], [20, 10], []]);
   });
 
-  it("re-arms after the battery rises above the threshold", () => {
-    expect(feed(new LowBatteryAlerts(), [at(20), at(21), at(19)])).toEqual([[20], [], [20]]);
+  it("does not re-arm on a wobble just above the threshold", () => {
+    expect(feed(new LowBatteryAlerts(), [at(21), at(20), at(21), at(20)])).toEqual([
+      [],
+      [20],
+      [],
+      [],
+    ]);
+  });
+
+  it("re-arms once the battery rises above threshold + 3", () => {
+    expect(feed(new LowBatteryAlerts(), [at(20), at(23), at(20), at(24), at(20)])).toEqual([
+      [20],
+      [],
+      [],
+      [],
+      [20],
+    ]);
   });
 
   it("does not re-arm while still at the threshold", () => {
