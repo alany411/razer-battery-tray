@@ -39,6 +39,10 @@ _Avoid_: Endpoint, path (outside the code)
 The separate process that does all HID work for the app: listing, opening, and the battery requests. It is restarted when an open or listing hangs, which drops every open handle.
 _Avoid_: Worker, helper
 
+**Run entry**:
+The value named after the app under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` that Windows launches at login. It counts as ours only when it points at this executable.
+_Avoid_: Startup entry, login item
+
 **Quarantine**:
 The polls in which an interface is not opened because its open hung, doubling from 1 to at most 15 after each hang. In the poll right after a restart, the other interfaces on its cable or dongle are not opened either, since they may hang just the same. The doubling starts over when the interface opens or leaves a listing.
 _Avoid_: Blacklist, cooldown
