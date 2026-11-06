@@ -1242,6 +1242,79 @@ describe("createBatteryPoller", () => {
     expect(transport.restarts).toBe(1);
   });
 
+  it("restarts HID and quarantines an interface once a request on it has hung for 3 rounds", async () => {
+    let hung = true;
+    let ended: (() => void)[] = [];
+    const devices = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+      { productId: 0x00c1, path: "viper", respond: awake(255, false) },
+    ]);
+    const transport = {
+      restarts: 0,
+      list: devices.list,
+      open: async (path: string): Promise<HidHandle> => {
+        const handle = await devices.open(path);
+        if (path !== "stuck" || !hung) return handle;
+        const getFeatureReport = () =>
+          new Promise<never>((_, reject) => {
+            ended.push(() => reject(new Error("HID process restarted")));
+          });
+        return { ...handle, getFeatureReport };
+      },
+      restart: () => {
+        transport.restarts++;
+        hung = false;
+        for (const end of ended) end();
+        ended = [];
+      },
+    };
+    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 5 });
+    const deathAdder = async () => {
+      const round = await poll();
+      expect(round).toMatchObject({
+        kind: "devices",
+        devices: [{}, { model: model("Viper V3 Pro"), result: { kind: "reading" } }],
+      });
+      return round.kind === "devices" ? round.devices[0]?.result : undefined;
+    };
+
+    for (let round = 1; round <= 3; round++) {
+      expect(await deathAdder()).toEqual({ kind: "unavailable", reason: "device is not responding" });
+    }
+    expect(transport.restarts).toBe(0);
+
+    expect(await deathAdder()).toEqual({ kind: "unavailable", reason: "device stopped responding" });
+    expect(transport.restarts).toBe(1);
+
+    expect(await deathAdder()).toEqual({
+      kind: "reading",
+      reading: { percent: 100, charging: false },
+    });
+  });
+
+  it("does not count a request still running for less than the HID timeout as hung", async () => {
+    const devices = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+    ]);
+    const transport = {
+      restarts: 0,
+      list: devices.list,
+      open: async (path: string): Promise<HidHandle> => ({
+        ...(await devices.open(path)),
+        getFeatureReport: hang,
+      }),
+      restart: () => {
+        transport.restarts++;
+      },
+    };
+    // Rounds end within 5 ms, like back-to-back Refresh now, well before the HID timeout.
+    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 1_000, deadlineMs: 5 });
+
+    for (let round = 1; round <= 5; round++) await poll();
+
+    expect(transport.restarts).toBe(0);
+  });
+
   it("restarts HID to list devices again when an earlier listing still hangs", async () => {
     let hung = true;
     const dongle = fakeTransport([

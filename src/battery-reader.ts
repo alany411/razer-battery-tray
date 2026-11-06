@@ -78,6 +78,11 @@ const HID_TIMEOUT_MS = 2_000;
 const POLL_DEADLINE_MS = 10_000;
 /** The most rounds in a row an interface whose open hung is left unopened. */
 const MAX_QUARANTINE_ROUNDS = 15;
+/**
+ * Rounds in a row a request may stay hung before the HID work restarts. A hung request holds only
+ * its own interface, so it gets longer than a hung open, but it must not hold it for good.
+ */
+const HUNG_REQUEST_ROUNDS = 3;
 const QUARANTINED = "device stopped responding";
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -366,8 +371,10 @@ interface GuardedTransport {
   restarted(): boolean;
   /**
    * Calls `restart` if an open or listing from earlier has been running for the HID timeout, since
-   * every new one would wait behind it, and quarantines the interface whose open hung. One that has
-   * run for less, e.g. cut short by the deadline of a round just before, is left to finish.
+   * every new one would wait behind it, or if a call on an interface has been running for the HID
+   * timeout at the start of 3 rounds in a row, and quarantines the interface whose open or call hung.
+   * One that has run for less, e.g. cut short by the deadline of a round just before, is left to
+   * finish.
    */
   newRound(restart: () => void): void;
 }
@@ -378,9 +385,16 @@ interface Quarantine {
   roundsLeft: number;
 }
 
+/** A call on an interface; `old` once it has run for the HID timeout. */
+interface RunningCall {
+  old: boolean;
+}
+
 /** HID calls made since the last restart. */
 interface Calls {
-  running: Map<string, number>;
+  running: Map<string, Set<RunningCall>>;
+  /** Rounds in a row that began with an old call running on the interface. */
+  busyRounds: Map<string, number>;
   handles: Map<string, HidHandle>;
   /** The open or listing that is running. `path` is the interface being opened, if it is an open. */
   head?: { path: string | undefined; old: boolean };
@@ -411,16 +425,24 @@ function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTran
     restarted: () => restarted,
     newRound: (restart) => {
       for (const q of quarantine.values()) q.roundsLeft = Math.max(0, q.roundsLeft - 1);
-      const hung = calls.head?.old ? calls.head : undefined;
-      restarted = hung !== undefined;
-      if (!hung) return;
-      if (hung.path !== undefined) {
+      const busyRounds = new Map<string, number>();
+      for (const [path, running] of calls.running) {
+        if ([...running].some((call) => call.old)) {
+          busyRounds.set(path, (calls.busyRounds.get(path) ?? 0) + 1);
+        }
+      }
+      calls.busyRounds = busyRounds;
+      const hung = new Set(
+        [...busyRounds].filter(([, rounds]) => rounds >= HUNG_REQUEST_ROUNDS).map(([path]) => path),
+      );
+      const hungOpen = calls.head?.old ? calls.head : undefined;
+      if (hungOpen?.path !== undefined) hung.add(hungOpen.path);
+      restarted = hungOpen !== undefined || hung.size > 0;
+      if (!restarted) return;
+      for (const path of hung) {
         // Each hang doubles the rounds it is left alone: 1, 2, 4 and so on.
-        const hangs = (quarantine.get(hung.path)?.hangs ?? 0) + 1;
-        quarantine.set(hung.path, {
-          hangs,
-          roundsLeft: Math.min(2 ** (hangs - 1), MAX_QUARANTINE_ROUNDS),
-        });
+        const hangs = (quarantine.get(path)?.hangs ?? 0) + 1;
+        quarantine.set(path, { hangs, roundsLeft: Math.min(2 ** (hangs - 1), MAX_QUARANTINE_ROUNDS) });
       }
       calls = freshCalls();
       restart();
@@ -462,15 +484,16 @@ function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTran
       let opened: Promise<HidHandle> | undefined;
       try {
         return await inTurn(current, timeoutMs, path, limit, () => {
-          opened = track(current, path, transport.open(path)).then((raw) => {
+          opened = track(current, path, timeoutMs, transport.open(path)).then((raw) => {
             quarantine.delete(path);
             const handle: HidHandle = {
-              sendFeatureReport: (data) => track(current, path, raw.sendFeatureReport(data)),
+              sendFeatureReport: (data) =>
+                track(current, path, timeoutMs, raw.sendFeatureReport(data)),
               getFeatureReport: (reportId, length) =>
-                track(current, path, raw.getFeatureReport(reportId, length)),
+                track(current, path, timeoutMs, raw.getFeatureReport(reportId, length)),
               close: () => {
                 if (current.handles.get(path) === handle) current.handles.delete(path);
-                return track(current, path, raw.close());
+                return track(current, path, timeoutMs, raw.close());
               },
             };
             current.handles.set(path, handle);
@@ -488,7 +511,7 @@ function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTran
 }
 
 function freshCalls(): Calls {
-  return { running: new Map(), handles: new Map(), waiting: [] };
+  return { running: new Map(), busyRounds: new Map(), handles: new Map(), waiting: [] };
 }
 
 /**
@@ -530,13 +553,18 @@ function inTurn<T>(
   });
 }
 
-/** Counts `call` as running on this interface until it settles. */
-function track<T>({ running }: Calls, path: string, call: Promise<T>): Promise<T> {
-  running.set(path, (running.get(path) ?? 0) + 1);
+/** Counts `call` as running on this interface until it settles, and as old after `timeoutMs`. */
+function track<T>({ running }: Calls, path: string, timeoutMs: number, call: Promise<T>): Promise<T> {
+  const entry: RunningCall = { old: false };
+  const onPath = running.get(path) ?? new Set();
+  running.set(path, onPath.add(entry));
+  const aging = setTimeout(() => {
+    entry.old = true;
+  }, timeoutMs);
   settled(call, () => {
-    const left = (running.get(path) ?? 1) - 1;
-    if (left === 0) running.delete(path);
-    else running.set(path, left);
+    clearTimeout(aging);
+    onPath.delete(entry);
+    if (onPath.size === 0 && running.get(path) === onPath) running.delete(path);
   });
   return call;
 }
