@@ -36,7 +36,8 @@ const RESUME_POLL_DELAY_MS = 5000;
 // Keyed by model name, like the displays.
 const alerts = new Map<string, LowBatteryAlerts>();
 // HID runs in its own process, restarted when an open or listing hangs.
-const pollBattery = createBatteryPoller(remoteHidTransport(forkHidProcess));
+const hidTransport = remoteHidTransport(forkHidProcess);
+const pollBattery = createBatteryPoller(hidTransport);
 const trays = new Map<string, Tray>();
 let taskbar: Taskbar = "dark";
 let displays: ReadonlyMap<string, TrayDisplay> = READING_DISPLAYS;
@@ -44,9 +45,22 @@ let displays: ReadonlyMap<string, TrayDisplay> = READING_DISPLAYS;
 const startsAtLogin = cachedValue(false, () => readStartsAtLogin(APP_ID, process.execPath));
 const synapseLauncher = cachedValue<SynapseLauncher | undefined>(undefined, findSynapse);
 
+// Set on quit, so a poll still running does not redraw or start a HID process during shutdown.
+let quitting = false;
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+const pollAfterResume = delayedRun(RESUME_POLL_DELAY_MS, poll);
+
 if (app.requestSingleInstanceLock()) {
   app.setAppUserModelId(APP_ID);
-  void app.whenReady().then(start);
+  app.on("before-quit", stop);
+  app
+    .whenReady()
+    .then(start)
+    .catch((error: unknown) => {
+      // Otherwise the app would hold the single-instance lock with no tray icon.
+      console.error("Could not start:", error);
+      app.quit();
+    });
 } else {
   app.quit();
 }
@@ -59,13 +73,28 @@ function start(): void {
   nativeTheme.on("updated", () => void followTaskbar());
   void followTaskbar();
 
-  void poll();
-  setInterval(() => void poll(), POLL_INTERVAL_MS);
+  poll();
+  pollTimer = setInterval(poll, POLL_INTERVAL_MS);
 
   // A reading from before sleep is stale, and a dongle confused by the resume is caught sooner.
-  const pollAfterResume = delayedRun(RESUME_POLL_DELAY_MS, () => void poll());
   powerMonitor.on("resume", () => pollAfterResume.schedule());
   powerMonitor.on("unlock-screen", () => pollAfterResume.schedule());
+}
+
+function stop(): void {
+  quitting = true;
+  clearInterval(pollTimer);
+  pollAfterResume.cancel();
+  for (const tray of trays.values()) tray.destroy();
+  trays.clear();
+  // Kills the HID process, ending any call still running in it.
+  hidTransport.restart();
+}
+
+/** Polls every device, logging a poll that failed; does nothing once the app is quitting. */
+function poll(): void {
+  if (quitting) return;
+  pollQueue().catch((error: unknown) => console.warn("Poll failed:", error));
 }
 
 async function followTaskbar(): Promise<void> {
@@ -76,8 +105,9 @@ async function followTaskbar(): Promise<void> {
 }
 
 // Refresh now during a poll queues another poll instead of being dropped.
-const poll = rerunQueue(async () => {
+const pollQueue = rerunQueue(async () => {
   const round = await pollBattery();
+  if (quitting) return;
   // Also catches theme changes Electron does not report.
   taskbar = await readTaskbar();
   if (round.kind === "none" && round.reason) console.warn(`No device listed: ${round.reason}`);
@@ -93,6 +123,7 @@ const poll = rerunQueue(async () => {
 
 /** Gives each display its own tray icon, removing icons for devices no longer listed. */
 function show(next: ReadonlyMap<string, TrayDisplay>): void {
+  if (quitting) return;
   displays = next;
   for (const [key, tray] of trays) {
     if (next.has(key)) continue;
@@ -149,7 +180,7 @@ function menu(display: TrayDisplay): Menu {
     { label: display.tooltip, enabled: false },
     ...(display.detail ? [{ label: display.detail, enabled: false }] : []),
     { type: "separator" },
-    { label: "Refresh now", click: () => void poll() },
+    { label: "Refresh now", click: poll },
     {
       label: "Open Synapse",
       enabled: synapse !== undefined,
@@ -197,11 +228,18 @@ function notifyIfLow(name: string, reading: BatteryReading): void {
 }
 
 function forkHidProcess(onMessage: (message: HidMessage) => void, onExit: () => void): HidProcess {
+  if (quitting) {
+    // A poll still running during shutdown gets no new process; its calls fail at once.
+    queueMicrotask(onExit);
+    return { post: () => {}, kill: () => {} };
+  }
   const child = utilityProcess.fork(join(import.meta.dirname, "hid-process-entry.js"), [], {
     serviceName: "Razer Battery Tray HID",
   });
   child.on("message", onMessage);
   child.on("exit", onExit);
+  // The exit event follows, which restarts the process at the next call.
+  child.on("error", (type, location) => console.warn(`HID process ${type} at ${location}`));
   return {
     // A utility process takes no target origin, unlike a window.
     // oxlint-disable-next-line unicorn/require-post-message-target-origin
