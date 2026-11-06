@@ -5,7 +5,7 @@ A Windows 11 tray app that shows the battery percentage of Razer wireless mice a
 - Each connected device gets its own tray icon showing its battery percentage as a number, e.g. `87`. The text turns amber at 20% or below and green while charging, and is white or near-black to suit a dark or light taskbar.
 - The tooltip and menu show the model, percentage and charging state, or **Asleep** when the dongle is plugged in but the device does not answer (or reports 0% while not charging).
 - With no supported device connected, a single icon shows **No Razer device found**. A device's icon goes away when it is unplugged.
-- A notification appears once per device when its battery drops to 20% and again at 10%, but not while it is charging. If the battery is already at 10% or below when first read, only the 10% notification appears. A threshold notifies again only after the battery has risen more than 3 points above it (to 24% or 14%), so a reading that wobbles around 20% does not notify each time.
+- A low-battery alert appears once per device when its battery drops to 20% and again at 10%, but not while it is charging. If one reading is already at 10% or below (the first reading, or a device waking up), only the 10% alert appears. A threshold alerts again only after the battery has risen more than 3 points above it (to 24% or 14%), so a reading that wobbles around 20% does not alert each time.
 - Batteries are read every 60 seconds. **Refresh now** in any menu reads them all immediately.
 - **Open Synapse** in the menu opens Razer Synapse, the same way as its Start menu shortcut. It is greyed out if Synapse is not installed.
 - **Start with Windows** in the menu launches the app at login.
