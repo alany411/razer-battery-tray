@@ -93,7 +93,7 @@ function show(next: ReadonlyMap<string, TrayDisplay>): void {
 function onRightClick(tray: Tray, key: string): void {
   // Build the menu as it opens, so the Start with Windows checkbox is never stale.
   tray.on("right-click", () => {
-    void Promise.all([readStartsAtLogin(APP_ID), findSynapse()]).then(
+    void Promise.all([readStartsAtLogin(APP_ID, process.execPath), findSynapse()]).then(
       ([startsAtLogin, synapse]) => {
         const display = displays.get(key);
         if (display && !tray.isDestroyed()) {
@@ -123,6 +123,8 @@ function menu(
       label: "Start with Windows",
       type: "checkbox",
       checked: startsAtLogin,
+      // A dev run would write a Run entry that launches the dev electron.exe.
+      enabled: app.isPackaged,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
     },
     { type: "separator" },
