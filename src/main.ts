@@ -14,6 +14,7 @@ import { readStartsAtLogin } from "./startup-entry.js";
 import { findSynapse, openSynapse } from "./synapse.js";
 import type { SynapseLauncher } from "./synapse.js";
 import { readTaskbar } from "./taskbar-theme.js";
+import { trayGuid } from "./tray-guid.js";
 import { ICON_SCALES, renderIcon } from "./tray-icon.js";
 import type { Taskbar } from "./tray-icon.js";
 
@@ -80,11 +81,25 @@ function show(next: ReadonlyMap<string, TrayDisplay>): void {
     if (tray) {
       tray.setImage(trayIcon(display));
     } else {
-      tray = new Tray(trayIcon(display));
+      tray = createTray(key, trayIcon(display));
       onRightClick(tray, key);
       trays.set(key, tray);
     }
     tray.setToolTip(display.tooltip);
+  }
+}
+
+/** A tray with its stable GUID, or without one should Windows refuse it (see ADR 0003). */
+function createTray(key: string, image: NativeImage): Tray {
+  const guid = trayGuid(app.getPath("exe"), key);
+  try {
+    return new Tray(image, guid);
+  } catch (error) {
+    console.warn(
+      `Tray icon GUID ${guid} refused, so Windows will not remember its visibility:`,
+      error,
+    );
+    return new Tray(image);
   }
 }
 
