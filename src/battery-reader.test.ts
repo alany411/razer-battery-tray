@@ -75,6 +75,13 @@ const options = { sleep: async () => {} };
 
 const hang = () => new Promise<never>(() => {});
 
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** One wireless device of each of six models, each answering through its dongle. */
+const SIX_DONGLES: FakeDevice[] = [0x00b7, 0x00c1, 0x00ab, 0x00b0, 0x00a8, 0x0077].map(
+  (productId) => ({ productId, path: `dongle-${productId}`, respond: awake(255, false) }),
+);
+
 /** A poller for transports whose calls never hang, so restarting them has nothing to end. */
 const poller = (transport: HidTransport, opts: PollOptions) =>
   createBatteryPoller({ restart: () => {}, ...transport }, opts);
@@ -576,6 +583,62 @@ describe("createBatteryPoller", () => {
         },
       ],
     });
+  });
+
+  it("opens every device in the same round when they all need opening", async () => {
+    const round = await poller(fakeTransport(SIX_DONGLES), options)();
+
+    expect(round).toMatchObject({ kind: "devices" });
+    if (round.kind !== "devices") return;
+    expect(round.devices).toHaveLength(6);
+    for (const device of round.devices) expect(device.result).toMatchObject({ kind: "reading" });
+  });
+
+  it("does not wait to retry just because another device is opening", async () => {
+    const waits: number[] = [];
+    const transport = fakeTransport(SIX_DONGLES.slice(0, 2));
+
+    await poller(transport, {
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    })();
+
+    expect(waits.filter((ms) => ms >= 500)).toEqual([]);
+  });
+
+  it("lets other devices wait out a slow listing instead of failing", async () => {
+    const devices = fakeTransport(SIX_DONGLES.slice(0, 3));
+    const transport: HidTransport = {
+      list: async () => {
+        await delay(7);
+        return devices.list();
+      },
+      open: devices.open,
+    };
+
+    const round = await poller(transport, { ...options, timeoutMs: 20 })();
+
+    expect(round).toMatchObject({ kind: "devices" });
+    if (round.kind !== "devices") return;
+    for (const device of round.devices) expect(device.result).toMatchObject({ kind: "reading" });
+  });
+
+  it("lets other devices wait out one device's slow open instead of failing", async () => {
+    const devices = fakeTransport(SIX_DONGLES.slice(0, 3));
+    const transport: HidTransport = {
+      list: devices.list,
+      open: async (path) => {
+        if (path === SIX_DONGLES[0]?.path) await delay(17);
+        return devices.open(path);
+      },
+    };
+
+    const round = await poller(transport, { ...options, timeoutMs: 20 })();
+
+    expect(round).toMatchObject({ kind: "devices" });
+    if (round.kind !== "devices") return;
+    for (const device of round.devices) expect(device.result).toMatchObject({ kind: "reading" });
   });
 
   it("polls every connected device in the table", async () => {
