@@ -151,6 +151,23 @@ describe("remoteHidTransport", () => {
     await expect(handle.getFeatureReport(0, 91)).rejects.toThrow("HID process exited");
   });
 
+  it("starts a HID process on the next call when starting one failed", async () => {
+    const { spawn, spawned } = processes(dongle);
+    let fail = true;
+    const transport = remoteHidTransport((onMessage, onExit) => {
+      if (fail) {
+        fail = false;
+        throw new Error("could not start the HID process");
+      }
+      return spawn(onMessage, onExit);
+    });
+
+    await expect(transport.list()).rejects.toThrow("could not start the HID process");
+
+    expect(await transport.list()).toEqual([DONGLE]);
+    expect(spawned).toHaveLength(1);
+  });
+
   it("reads devices again on the next poll after the HID process exits", async () => {
     const { spawn, spawned } = processes(dongle);
     const poll = createBatteryPoller(remoteHidTransport(spawn), { sleep: async () => {} });
