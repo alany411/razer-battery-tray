@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createBatteryPoller } from "./battery-reader.js";
 import type { HidHandle, HidTransport } from "./battery-reader.js";
 import { remoteHidTransport, serveHid } from "./hid-process.js";
-import type { SpawnHidProcess } from "./hid-process.js";
+import type { HidCall, HidMessage, SpawnHidProcess } from "./hid-process.js";
 
 const DONGLE = { productId: 0x00b7, path: "dongle" };
 const CRASH = { productId: 0x00b7, path: "crash" };
@@ -72,6 +72,58 @@ function processes(transport: () => HidTransport) {
   return { spawn, spawned };
 }
 
+/** A dongle whose handles count how often they were closed. */
+function countingDongle() {
+  const closed: number[] = [];
+  let opens = 0;
+  const transport: HidTransport = {
+    list: async () => [DONGLE],
+    open: async () => {
+      const id = opens++;
+      return { ...(await dongle().open(DONGLE.path)), close: async () => void closed.push(id) };
+    },
+  };
+  return { transport, closed };
+}
+
+describe("serveHid", () => {
+  const serve = (transport: HidTransport) => {
+    const replies: HidMessage[] = [];
+    const handle = serveHid(transport, (message) => replies.push(message));
+    let id = 0;
+    const send = async (request: HidCall) => {
+      const sent = id++;
+      handle({ id: sent, request });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return replies.find((reply) => reply.kind === "reply" && reply.id === sent);
+    };
+    return send;
+  };
+
+  it("closes the handle it held when a path is opened again", async () => {
+    const { transport, closed } = countingDongle();
+    const send = serve(transport);
+
+    await send({ call: "open", path: DONGLE.path });
+    await send({ call: "open", path: DONGLE.path });
+
+    expect(closed).toEqual([0]);
+  });
+
+  it("forgets a handle once it is closed", async () => {
+    const { transport, closed } = countingDongle();
+    const send = serve(transport);
+
+    await send({ call: "open", path: DONGLE.path });
+    await send({ call: "close", path: DONGLE.path });
+
+    expect(closed).toEqual([0]);
+    expect(await send({ call: "getFeatureReport", path: DONGLE.path, reportId: 0, length: 91 })).toEqual(
+      expect.objectContaining({ ok: false, error: "device is not open" }),
+    );
+  });
+});
+
 describe("remoteHidTransport", () => {
   it("lists, opens and reads a device in the HID process", async () => {
     const { spawn, spawned } = processes(dongle);
@@ -114,6 +166,34 @@ describe("remoteHidTransport", () => {
     await expect(opening).rejects.toThrow("HID process restarted");
     expect(spawned[0]?.killed).toBe(true);
     await expect(transport.open("dongle")).resolves.toBeDefined();
+    expect(spawned).toHaveLength(2);
+  });
+
+  it("ends a hung request already sent to the HID process when it restarts", async () => {
+    let first = true;
+    const { spawn, spawned } = processes(() => {
+      const hangs = first;
+      first = false;
+      const inner = dongle();
+      return {
+        ...inner,
+        open: async (path) => ({
+          ...(await inner.open(path)),
+          ...(hangs ? { getFeatureReport: hang } : {}),
+        }),
+      };
+    });
+    const transport = remoteHidTransport(spawn);
+    const handle = await transport.open(DONGLE.path);
+
+    const reading = handle.getFeatureReport(0, 91);
+    // Let the request reach the process before it restarts.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    transport.restart();
+
+    await expect(reading).rejects.toThrow("HID process restarted");
+    const fresh = await transport.open(DONGLE.path);
+    await expect(fresh.getFeatureReport(0, 91)).resolves.toBeDefined();
     expect(spawned).toHaveLength(2);
   });
 
