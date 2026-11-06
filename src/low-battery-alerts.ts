@@ -20,20 +20,20 @@ export class LowBatteryAlerts {
    * A charging reading never alerts or disarms, but still re-arms.
    */
   update(reading: BatteryReading): number | undefined {
-    let alert: number | undefined;
+    let lowestCrossed: number | undefined;
     for (const [threshold, armed] of this.armed) {
       if (reading.percent > threshold + REARM_MARGIN) {
         this.armed.set(threshold, true);
       } else if (armed && reading.percent <= threshold && !reading.charging) {
-        if (alert === undefined || threshold < alert) alert = threshold;
+        if (lowestCrossed === undefined || threshold < lowestCrossed) lowestCrossed = threshold;
       }
     }
     // One drop gives one alert, so every threshold the reading is at or below disarms with it.
-    if (alert !== undefined) {
+    if (lowestCrossed !== undefined) {
       for (const threshold of this.armed.keys()) {
         if (reading.percent <= threshold) this.armed.set(threshold, false);
       }
     }
-    return alert;
+    return lowestCrossed;
   }
 }
