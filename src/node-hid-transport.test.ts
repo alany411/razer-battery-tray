@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const devicesAsync = vi.fn();
-vi.mock("node-hid", () => ({ default: { devicesAsync, HIDAsync: { open: vi.fn() } } }));
+const devicesAsync = vi.fn<(vendorId?: number, productId?: number) => Promise<unknown[]>>();
+vi.mock("node-hid", () => ({ default: { devicesAsync } }));
 
 const { nodeHidTransport } = await import("./node-hid-transport.js");
 

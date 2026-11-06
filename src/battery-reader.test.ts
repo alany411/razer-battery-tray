@@ -75,6 +75,8 @@ const options = { sleep: async () => {} };
 
 const hang = () => new Promise<never>(() => {});
 
+const noop = () => {};
+
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** One wireless device of each of six models, each answering through its dongle. */
@@ -124,7 +126,7 @@ function hidProcess(devices: FakeDevice[], hangs: Set<string>) {
  * the dongle runs until `finish`, so a round ends with it still running.
  */
 function slowOpen() {
-  let finish = () => {};
+  let finish: () => void = noop;
   let first = true;
   const dongle = fakeTransport([
     { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
