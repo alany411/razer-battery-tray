@@ -40,7 +40,7 @@ One HID path of a device's connection, which node-hid opens and lists. A dongle 
 _Avoid_: Endpoint, path (outside the code)
 
 **HID process**:
-The separate process that does all HID work for the app: listing, opening, and the battery requests. It is restarted when an open or listing hangs, which drops every open handle.
+The separate process that does all HID work for the app: listing, opening, and the battery requests. It is restarted when an open or listing hangs, or when a battery request has hung for 3 polls in a row, which drops every open handle.
 _Avoid_: Worker, helper
 
 **Run entry**:
@@ -48,5 +48,5 @@ The value named after the app under `HKCU\Software\Microsoft\Windows\CurrentVers
 _Avoid_: Startup entry, login item
 
 **Quarantine**:
-The polls in which an interface is not opened because its open hung, doubling from 1 to at most 15 after each hang. In the poll right after a restart, the other interfaces on its cable or dongle are not opened either, since they may hang just the same. The doubling starts over when the interface opens or leaves a listing.
+The polls in which an interface is not opened because its open or a battery request on it hung, or its open made the HID process exit, doubling from 1 to at most 15 after each hang. In the poll right after a restart, the other interfaces on the same connection (cable or dongle, told apart by product ID) are not opened either, since they may hang just the same. The doubling starts over when the interface opens or leaves a listing.
 _Avoid_: Blacklist, cooldown

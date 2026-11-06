@@ -55,6 +55,11 @@ export interface RestartableHidTransport extends HidTransport {
    * Handles opened before stop working.
    */
   restart(): void;
+  /**
+   * Calls `listener` each time the HID work ends on its own, not through `restart`, e.g. when an
+   * open crashes it. Handles opened before stop working, and calls still running fail.
+   */
+  onExit?(listener: () => void): void;
 }
 
 export interface PollOptions {
@@ -76,8 +81,13 @@ const RESPONSE_DELAY_MS = 50;
 const HID_TIMEOUT_MS = 2_000;
 // Keeps Refresh now responsive (at most twice this per round) even when every interface is stuck.
 const POLL_DEADLINE_MS = 10_000;
-/** The most rounds in a row an interface whose open hung is left unopened. */
+/** The most rounds in a row an interface in quarantine is left unopened. */
 const MAX_QUARANTINE_ROUNDS = 15;
+/**
+ * Rounds in a row a request may stay hung before the HID work restarts. A hung request holds only
+ * its own interface, so it gets longer than a hung open, but it must not hold it for good.
+ */
+const HUNG_REQUEST_ROUNDS = 3;
 const QUARANTINED = "device stopped responding";
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -93,6 +103,7 @@ export function createBatteryPoller(
 ): () => Promise<PollRound> {
   const memory: RoundMemory = { devices: new Map(), lastModels: [] };
   const guarded = guard(transport, options.timeoutMs);
+  transport.onExit?.(() => guarded.exited());
   return () => pollRound(guarded, () => transport.restart(), options, memory);
 }
 
@@ -206,6 +217,8 @@ async function poll(
     const found = findConnection(i.productId);
     return found?.model === model ? found.link : undefined;
   };
+  // Each cable or dongle is its own connection, even two dongles of one model.
+  const sameConnection = (a: HidDeviceInfo, b: HidDeviceInfo) => a.productId === b.productId;
   const isWired = (i: HidDeviceInfo) => linkOf(i) === "wired";
   const isWireless = (i: HidDeviceInfo) => linkOf(i) === "wireless";
 
@@ -219,6 +232,8 @@ async function poll(
       lastReason = "poll timed out";
       break;
     }
+    // The reason given at the end is the last attempt's, e.g. not found once the device is unplugged.
+    skippedHung = false;
 
     // List again on every retry: the dongle may show up late, e.g. right after resume.
     let interfaces: HidDeviceInfo[];
@@ -228,8 +243,8 @@ async function poll(
       lastReason = errorMessage(error);
       continue;
     }
-    // Any interface whose open hung before goes last, so if it hangs again the others have had
-    // their turn. Then prefer the cable: when it is plugged in it answers even if the dongle is also
+    // Any interface that hung before (its open or a request on it) goes last, so if it hangs again
+    // the others have had their turn. Then prefer the cable: when it is plugged in it answers even if the dongle is also
     // present. Then the interface that answered last time.
     const candidates = interfaces
       .filter((i) => linkOf(i) !== undefined)
@@ -249,12 +264,12 @@ async function poll(
     // Asleep needs the dongle to be present now, not just on an earlier attempt.
     if (!candidates.some(isWireless)) deviceAsleep = false;
     // Opening it could hang the HID work again before the other devices are opened. Right after a
-    // restart every device opens again, so the other interfaces on its link (the cable or the
+    // restart every device opens again, so the other interfaces on its connection (the cable or the
     // dongle), which may hang just the same, wait that round too.
     const hung = (c: HidDeviceInfo) =>
       guarded.quarantined(c.path) ||
       (guarded.restarted() &&
-        candidates.some((o) => linkOf(o) === linkOf(c) && guarded.quarantined(o.path)));
+        candidates.some((o) => sameConnection(o, c) && guarded.quarantined(o.path)));
     skippedHung = candidates.some(hung);
 
     for (const candidate of candidates) {
@@ -263,9 +278,9 @@ async function poll(
         break attempts;
       }
       if (hung(candidate)) continue;
-      // A call that timed out earlier is still running on this link (the cable or the dongle), so
-      // another would only hold another thread.
-      if (candidates.some((c) => linkOf(c) === linkOf(candidate) && guarded.busy(c.path))) {
+      // A call that timed out earlier is still running on this connection (the cable or the
+      // dongle), so another would only hold another thread.
+      if (candidates.some((c) => sameConnection(c, candidate) && guarded.busy(c.path))) {
         lastReason = "device is not responding";
         continue;
       }
@@ -297,18 +312,26 @@ async function readFrom(
   const handle = await transport.open(candidate.path);
   try {
     const batteryByte = await query(handle, BATTERY_LEVEL, transactionId, sleep);
-    // Models on disposable batteries have no charging flag.
+    // Models on disposable batteries have no charging flag. The device just answered the battery
+    // request, so no answer to this one does not make it asleep.
     const charging =
-      model.rechargeable && (await query(handle, CHARGING_STATUS, transactionId, sleep)) === 1;
+      model.rechargeable &&
+      (await query(handle, CHARGING_STATUS, transactionId, sleep).catch((error: unknown) => {
+        if (error instanceof DeviceAsleepError) return 0;
+        throw error;
+      })) === 1;
     // A device that is truly empty is off, so a 0% reading through the dongle means it is asleep.
     if (link === "wireless" && batteryByte === 0 && !charging) {
       throw new DeviceAsleepError("device reported 0%");
     }
     return { percent: Math.round((batteryByte / 255) * 100), charging };
   } catch (error) {
-    // The handle stays open for the next poll unless something went wrong with it. A device that
-    // did not answer still has a working handle, and opening again may wait behind a hung open.
-    if (!(error instanceof DeviceAsleepError)) await handle.close().catch(() => {});
+    // The handle stays open for the next poll unless a call on it failed. A device that did not
+    // answer, or answered something else (e.g. Synapse's request), still has a working handle, and
+    // opening again may wait behind a hung open.
+    if (!(error instanceof DeviceAsleepError || error instanceof ProtocolError)) {
+      await handle.close().catch(() => {});
+    }
     throw error;
   }
 }
@@ -322,12 +345,17 @@ async function query(
   const report = new Uint8Array(REPORT_LENGTH + 1);
   report.set(buildRequest(command, transactionId), 1);
   await handle.sendFeatureReport(report);
-  await sleep(RESPONSE_DELAY_MS);
-  const parsed = parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));
+  const read = async () => {
+    await sleep(RESPONSE_DELAY_MS);
+    return parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));
+  };
+  let parsed = await read();
+  // A busy device may have the answer ready a moment later, without asking again.
+  if (!parsed.ok && parsed.busy) parsed = await read();
   if (!parsed.ok)
     throw parsed.deviceDidNotAnswer
       ? new DeviceAsleepError(parsed.reason)
-      : new Error(parsed.reason);
+      : new ProtocolError(parsed.reason);
   return parsed.value;
 }
 
@@ -349,10 +377,18 @@ interface GuardedTransport {
   restarted(): boolean;
   /**
    * Calls `restart` if an open or listing from earlier has been running for the HID timeout, since
-   * every new one would wait behind it, and quarantines the interface whose open hung. One that has
-   * run for less, e.g. cut short by the deadline of a round just before, is left to finish.
+   * every new one would wait behind it, or if a call on an interface has been running for the HID
+   * timeout at the start of 3 rounds in a row, and quarantines the interface whose open or call hung.
+   * One that has run for less, e.g. cut short by the deadline of a round just before, is left to
+   * finish.
    */
   newRound(restart: () => void): void;
+  /**
+   * Forgets every call and handle, since the HID work ended on its own. An open running at that
+   * moment may have ended it, so its interface is quarantined at once, and the other interfaces on
+   * its connection wait for the rest of this round and the next, as after a restart.
+   */
+  exited(): void;
 }
 
 interface Quarantine {
@@ -361,16 +397,29 @@ interface Quarantine {
   roundsLeft: number;
 }
 
+/** A call on an interface; `old` once it has run for the HID timeout. */
+interface RunningCall {
+  old: boolean;
+}
+
 /** HID calls made since the last restart. */
 interface Calls {
-  running: Map<string, number>;
+  running: Map<string, Set<RunningCall>>;
+  /** Rounds in a row that began with an old call running on the interface. */
+  busyRounds: Map<string, number>;
   handles: Map<string, HidHandle>;
   /** The open or listing that is running. `path` is the interface being opened, if it is an open. */
   head?: { path: string | undefined; old: boolean };
   /** Opens and listings waiting for their turn, first come first served. */
-  waiting: (() => void)[];
+  waiting: Waiting[];
   listing?: Promise<HidDeviceInfo[]>;
   lastListed?: HidDeviceInfo[];
+}
+
+interface Waiting {
+  start(): void;
+  /** Gives up waiting, e.g. because the HID work these calls were for has ended. */
+  cancel(error: Error): void;
 }
 
 /**
@@ -384,6 +433,22 @@ interface Calls {
 function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTransport {
   let calls = freshCalls();
   let restarted = false;
+  /** Whether the next round counts as a restart, since an open ended the HID work on its own. */
+  let exitedOpening = false;
+  // Each hang doubles the rounds an interface is left alone: 1, 2, 4 and so on. `extra` covers the
+  // rest of the round it hung in.
+  const quarantineHang = (path: string, extra = 0) => {
+    const hangs = (quarantine.get(path)?.hangs ?? 0) + 1;
+    quarantine.set(path, {
+      hangs,
+      roundsLeft: Math.min(2 ** (hangs - 1), MAX_QUARANTINE_ROUNDS) + extra,
+    });
+  };
+  const dropCalls = (reason: string) => {
+    for (const waiting of calls.waiting) waiting.cancel(new Error(reason));
+    calls.waiting = [];
+    calls = freshCalls();
+  };
   // Keyed by path. Kept across restarts.
   const quarantine = new Map<string, Quarantine>();
 
@@ -394,19 +459,34 @@ function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTran
     restarted: () => restarted,
     newRound: (restart) => {
       for (const q of quarantine.values()) q.roundsLeft = Math.max(0, q.roundsLeft - 1);
-      const hung = calls.head?.old ? calls.head : undefined;
-      restarted = hung !== undefined;
-      if (!hung) return;
-      if (hung.path !== undefined) {
-        // Each hang doubles the rounds it is left alone: 1, 2, 4 and so on.
-        const hangs = (quarantine.get(hung.path)?.hangs ?? 0) + 1;
-        quarantine.set(hung.path, {
-          hangs,
-          roundsLeft: Math.min(2 ** (hangs - 1), MAX_QUARANTINE_ROUNDS),
-        });
+      const busyRounds = new Map<string, number>();
+      for (const [path, running] of calls.running) {
+        if ([...running].some((call) => call.old)) {
+          busyRounds.set(path, (calls.busyRounds.get(path) ?? 0) + 1);
+        }
       }
-      calls = freshCalls();
+      calls.busyRounds = busyRounds;
+      const hung = new Set(
+        [...busyRounds].filter(([, rounds]) => rounds >= HUNG_REQUEST_ROUNDS).map(([path]) => path),
+      );
+      const hungOpen = calls.head?.old ? calls.head : undefined;
+      if (hungOpen?.path !== undefined) hung.add(hungOpen.path);
+      const restarting = hungOpen !== undefined || hung.size > 0;
+      restarted = restarting || exitedOpening;
+      exitedOpening = false;
+      if (!restarting) return;
+      for (const path of hung) quarantineHang(path);
+      dropCalls("HID process restarted");
       restart();
+    },
+    exited: () => {
+      const opening = calls.head?.path;
+      if (opening !== undefined) {
+        quarantineHang(opening, 1);
+        restarted = true;
+        exitedOpening = true;
+      }
+      dropCalls("HID process exited");
     },
     list: (limit) => {
       const current = calls;
@@ -445,15 +525,16 @@ function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTran
       let opened: Promise<HidHandle> | undefined;
       try {
         return await inTurn(current, timeoutMs, path, limit, () => {
-          opened = track(current, path, transport.open(path)).then((raw) => {
+          opened = track(current, path, timeoutMs, transport.open(path)).then((raw) => {
             quarantine.delete(path);
             const handle: HidHandle = {
-              sendFeatureReport: (data) => track(current, path, raw.sendFeatureReport(data)),
+              sendFeatureReport: (data) =>
+                track(current, path, timeoutMs, raw.sendFeatureReport(data)),
               getFeatureReport: (reportId, length) =>
-                track(current, path, raw.getFeatureReport(reportId, length)),
+                track(current, path, timeoutMs, raw.getFeatureReport(reportId, length)),
               close: () => {
                 if (current.handles.get(path) === handle) current.handles.delete(path);
-                return track(current, path, raw.close());
+                return track(current, path, timeoutMs, raw.close());
               },
             };
             current.handles.set(path, handle);
@@ -471,7 +552,7 @@ function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTran
 }
 
 function freshCalls(): Calls {
-  return { running: new Map(), handles: new Map(), waiting: [] };
+  return { running: new Map(), busyRounds: new Map(), handles: new Map(), waiting: [] };
 }
 
 /**
@@ -489,6 +570,7 @@ function inTurn<T>(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const run = () => {
       clearTimeout(timer);
+      if (calls.waiting[0] === waiting) calls.waiting.shift();
       const head = { path, old: false };
       calls.head = head;
       // Set before the call's own time limit, so a call given the whole HID timeout is old by the
@@ -500,26 +582,43 @@ function inTurn<T>(
       settled(call, () => {
         clearTimeout(aging);
         if (calls.head === head) delete calls.head;
-        calls.waiting.shift()?.();
+        calls.waiting[0]?.start();
       });
       timeout(call, limit()).then(resolve, reject);
     };
+    const waiting: Waiting = {
+      start: run,
+      cancel: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    };
     if (!calls.head && calls.waiting.length === 0) return run();
-    calls.waiting.push(run);
+    calls.waiting.push(waiting);
     timer = setTimeout(() => {
-      calls.waiting.splice(calls.waiting.indexOf(run), 1);
+      calls.waiting.splice(calls.waiting.indexOf(waiting), 1);
       reject(new Error("HID request timed out"));
     }, limit());
   });
 }
 
-/** Counts `call` as running on this interface until it settles. */
-function track<T>({ running }: Calls, path: string, call: Promise<T>): Promise<T> {
-  running.set(path, (running.get(path) ?? 0) + 1);
+/** Counts `call` as running on this interface until it settles, and as old after `timeoutMs`. */
+function track<T>(
+  { running }: Calls,
+  path: string,
+  timeoutMs: number,
+  call: Promise<T>,
+): Promise<T> {
+  const entry: RunningCall = { old: false };
+  const onPath = running.get(path) ?? new Set();
+  running.set(path, onPath.add(entry));
+  const aging = setTimeout(() => {
+    entry.old = true;
+  }, timeoutMs);
   settled(call, () => {
-    const left = (running.get(path) ?? 1) - 1;
-    if (left === 0) running.delete(path);
-    else running.set(path, left);
+    clearTimeout(aging);
+    onPath.delete(entry);
+    if (onPath.size === 0 && running.get(path) === onPath) running.delete(path);
   });
   return call;
 }
@@ -555,6 +654,9 @@ function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 /** The device did not answer the request, or answered 0% through the dongle while not charging. */
 class DeviceAsleepError extends Error {}
+
+/** A response came back, but not the answer: a busy or other status, or another request's answer. */
+class ProtocolError extends Error {}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

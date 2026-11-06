@@ -105,6 +105,7 @@ interface Connection {
 export function remoteHidTransport(spawn: SpawnHidProcess): RestartableHidTransport {
   let current: Connection | undefined;
   let nextId = 0;
+  const exitListeners: (() => void)[] = [];
 
   const end = (connection: Connection, reason: string) => {
     // A killed process exits afterwards; it ended because of the restart.
@@ -118,7 +119,6 @@ export function remoteHidTransport(spawn: SpawnHidProcess): RestartableHidTransp
   const connect = (): Connection => {
     if (current) return current;
     const connection: Connection = { ready: false, waiting: [], pending: new Map() };
-    current = connection;
     connection.process = spawn(
       (message) => {
         if (message.kind === "ready") {
@@ -132,8 +132,15 @@ export function remoteHidTransport(spawn: SpawnHidProcess): RestartableHidTransp
         if (message.ok) pending?.resolve(message.value);
         else pending?.reject(new Error(message.error));
       },
-      () => end(connection, "HID process exited"),
+      () => {
+        // A killed process exits afterwards; that exit was asked for, not on its own.
+        if (connection.ended !== undefined) return;
+        end(connection, "HID process exited");
+        for (const listener of exitListeners) listener();
+      },
     );
+    // Only once it started: a spawn that threw leaves the next call to start another.
+    if (connection.ended === undefined) current = connection;
     return connection;
   };
 
@@ -148,7 +155,7 @@ export function remoteHidTransport(spawn: SpawnHidProcess): RestartableHidTransp
   };
 
   return {
-    list: () => call<HidDeviceInfo[]>(connect(), { call: "list" }),
+    list: async () => call<HidDeviceInfo[]>(connect(), { call: "list" }),
     open: async (path) => {
       const connection = connect();
       await call(connection, { call: "open", path });
@@ -168,6 +175,9 @@ export function remoteHidTransport(spawn: SpawnHidProcess): RestartableHidTransp
       if (!connection) return;
       end(connection, "HID process restarted");
       connection.process?.kill();
+    },
+    onExit: (listener) => {
+      exitListeners.push(listener);
     },
   };
 }

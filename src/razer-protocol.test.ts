@@ -64,6 +64,7 @@ describe("parseResponse", () => {
       ok: false,
       reason: "status 0x04",
       deviceDidNotAnswer: true,
+      busy: false,
     });
   });
 
@@ -85,6 +86,18 @@ describe("parseResponse", () => {
     });
   });
 
+  it.each([
+    [0x01, true],
+    [0x05, false],
+  ])("marks status %i as busy: %s", (status, busy) => {
+    const request = buildRequest(BATTERY_LEVEL, 0x1f);
+
+    expect(parseResponse(BATTERY_LEVEL, responseFor(request, status, 0))).toMatchObject({
+      ok: false,
+      busy,
+    });
+  });
+
   it("rejects a response to a different command", () => {
     const request = buildRequest(CHARGING_STATUS, 0x1f);
 
@@ -92,6 +105,7 @@ describe("parseResponse", () => {
       ok: false,
       reason: "mismatched command",
       deviceDidNotAnswer: false,
+      busy: false,
     });
   });
 
@@ -100,6 +114,7 @@ describe("parseResponse", () => {
       ok: false,
       reason: "unexpected length 10",
       deviceDidNotAnswer: false,
+      busy: false,
     });
   });
 });
