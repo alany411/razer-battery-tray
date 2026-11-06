@@ -64,12 +64,18 @@ export async function findSynapse(): Promise<SynapseLauncher | undefined> {
   });
 }
 
+/** Opens Synapse, logging rather than throwing when it cannot, e.g. once it is uninstalled. */
 export function openSynapse(launcher: SynapseLauncher): void {
   if (launcher.kind === "shortcut") {
-    void shell.openPath(launcher.path);
+    // openPath resolves with an error message, or "" when the shortcut opened.
+    void shell.openPath(launcher.path).then((error) => {
+      if (error) console.warn(`Could not open ${launcher.path}: ${error}`);
+    });
     return;
   }
-  spawn(launcher.path, launcher.args, { detached: true, stdio: "ignore" }).unref();
+  const child = spawn(launcher.path, launcher.args, { detached: true, stdio: "ignore" });
+  child.on("error", (error) => console.warn(`Could not start ${launcher.path}: ${error.message}`));
+  child.unref();
 }
 
 async function listShortcuts(dir: string): Promise<string[]> {
