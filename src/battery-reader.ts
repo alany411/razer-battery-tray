@@ -206,6 +206,8 @@ async function poll(
     const found = findConnection(i.productId);
     return found?.model === model ? found.link : undefined;
   };
+  // Each cable or dongle is its own connection, even two dongles of one model.
+  const sameConnection = (a: HidDeviceInfo, b: HidDeviceInfo) => a.productId === b.productId;
   const isWired = (i: HidDeviceInfo) => linkOf(i) === "wired";
   const isWireless = (i: HidDeviceInfo) => linkOf(i) === "wireless";
 
@@ -251,12 +253,12 @@ async function poll(
     // Asleep needs the dongle to be present now, not just on an earlier attempt.
     if (!candidates.some(isWireless)) deviceAsleep = false;
     // Opening it could hang the HID work again before the other devices are opened. Right after a
-    // restart every device opens again, so the other interfaces on its link (the cable or the
+    // restart every device opens again, so the other interfaces on its connection (the cable or the
     // dongle), which may hang just the same, wait that round too.
     const hung = (c: HidDeviceInfo) =>
       guarded.quarantined(c.path) ||
       (guarded.restarted() &&
-        candidates.some((o) => linkOf(o) === linkOf(c) && guarded.quarantined(o.path)));
+        candidates.some((o) => sameConnection(o, c) && guarded.quarantined(o.path)));
     skippedHung = candidates.some(hung);
 
     for (const candidate of candidates) {
@@ -265,9 +267,9 @@ async function poll(
         break attempts;
       }
       if (hung(candidate)) continue;
-      // A call that timed out earlier is still running on this link (the cable or the dongle), so
-      // another would only hold another thread.
-      if (candidates.some((c) => linkOf(c) === linkOf(candidate) && guarded.busy(c.path))) {
+      // A call that timed out earlier is still running on this connection (the cable or the
+      // dongle), so another would only hold another thread.
+      if (candidates.some((c) => sameConnection(c, candidate) && guarded.busy(c.path))) {
         lastReason = "device is not responding";
         continue;
       }

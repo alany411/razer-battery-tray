@@ -912,6 +912,54 @@ describe("createBatteryPoller", () => {
     });
   });
 
+  it("still reads one of a model's dongles while a call on its other dongle hangs", async () => {
+    const devices = fakeTransport([
+      { productId: 0x00c3, path: "hyperpolling", respond: awake(255, false) },
+      { productId: DONGLE_PRODUCT_ID, path: "hyperspeed", respond: awake(128, false) },
+    ]);
+    const transport: HidTransport = {
+      list: devices.list,
+      open: async (path) => {
+        const handle = await devices.open(path);
+        return path === "hyperpolling" ? { ...handle, getFeatureReport: hang } : handle;
+      },
+    };
+
+    expect(await poller(transport, { ...options, timeoutMs: 5 })()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "reading", reading: { percent: 50, charging: false } },
+        },
+      ],
+    });
+  });
+
+  it("does not hold back one of a model's dongles right after its other dongle's open hung", async () => {
+    const hid = hidProcess(
+      [
+        { productId: 0x00c3, path: "hyperpolling", respond: awake(255, false) },
+        { productId: DONGLE_PRODUCT_ID, path: "hyperspeed", respond: awake(128, false) },
+      ],
+      new Set(["hyperpolling"]),
+    );
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
+
+    await poll();
+
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "reading", reading: { percent: 50, charging: false } },
+        },
+      ],
+    });
+    expect(hid.restarts).toBe(1);
+  });
+
   it("restarts HID to drop an unplugged device while another device's open hangs", async () => {
     // node-hid opens and lists one at a time, so a hung open holds up every later open and list.
     const devices: FakeDevice[] = [
