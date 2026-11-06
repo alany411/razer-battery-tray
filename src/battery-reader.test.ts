@@ -992,6 +992,32 @@ describe("createBatteryPoller", () => {
     expect(hid.opened.filter((path) => path === "wrong-interface").length).toBeGreaterThan(0);
   });
 
+  it("says a device is not found, not that it stopped responding, once it is unplugged mid-poll", async () => {
+    let unplug = false;
+    const devices: FakeDevice[] = [
+      { productId: DONGLE_PRODUCT_ID, path: "stuck", respond: awake(255, false) },
+      {
+        productId: DONGLE_PRODUCT_ID,
+        path: "wrong-interface",
+        respond: () => {
+          if (unplug) devices.splice(0);
+          return "error";
+        },
+      },
+    ];
+    const hid = hidProcess(devices, new Set(["stuck"]));
+    const poll = poller(hid, { ...options, timeoutMs: 5 });
+
+    // Hangs in rounds 1 and 3, so it is left alone in rounds 4 and 5; round 5 is no restart.
+    for (let round = 1; round <= 4; round++) await poll();
+    unplug = true;
+
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "unavailable", reason: "device not found" } }],
+    });
+  });
+
   it("says a device stopped responding rather than asleep while one of its interfaces is quarantined", async () => {
     const hid = hidProcess(
       [

@@ -219,6 +219,8 @@ async function poll(
       lastReason = "poll timed out";
       break;
     }
+    // The reason given at the end is the last attempt's, e.g. not found once the device is unplugged.
+    skippedHung = false;
 
     // List again on every retry: the dongle may show up late, e.g. right after resume.
     let interfaces: HidDeviceInfo[];
