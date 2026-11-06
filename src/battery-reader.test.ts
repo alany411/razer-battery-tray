@@ -471,6 +471,19 @@ describe("pollBattery", () => {
     expect(await pollBattery(transport, options)).toEqual({ kind: "asleep" });
   });
 
+  it("cuts a HID call short at the poll deadline, even within its own time limit", async () => {
+    const transport = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+    ]);
+
+    const result = await pollBattery(
+      { list: transport.list, open: hang },
+      { ...options, timeoutMs: 60_000, deadlineMs: 20 },
+    );
+
+    expect(result).toMatchObject({ kind: "unavailable" });
+  });
+
   it("does not sleep past the poll deadline", async () => {
     let clock = 0;
     const transport = fakeTransport([
@@ -1100,6 +1113,58 @@ describe("createBatteryPoller", () => {
       kind: "devices",
       devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
     });
+  });
+
+  it("cuts finding the devices short at the deadline, even within the call's own time limit", async () => {
+    const transport: RestartableHidTransport = { list: hang, open: hang, restart: () => {} };
+
+    const round = await createBatteryPoller(transport, {
+      ...options,
+      timeoutMs: 60_000,
+      deadlineMs: 20,
+    })();
+
+    expect(round).toMatchObject({ kind: "none", reason: "listing devices timed out" });
+  });
+
+  it("finds the devices from the last listing while an open is still running", async () => {
+    const { poll } = slowOpen();
+
+    await poll();
+
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "unavailable", reason: "device is not responding" },
+        },
+      ],
+    });
+  });
+
+  it("finds the devices from the last listing while a listing is still running", async () => {
+    let lists = 0;
+    const dongle = fakeTransport([
+      { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+    ]);
+    const transport: RestartableHidTransport = {
+      list: () => (lists++ === 0 ? dongle.list() : hang()),
+      open: dongle.open,
+      restart: () => {},
+    };
+    // Rounds end within 5 ms, long before the listing that hangs counts as hung.
+    const poll = createBatteryPoller(transport, { ...options, timeoutMs: 50, deadlineMs: 5 });
+
+    await poll();
+    await poll();
+
+    // The dongle stayed open, so it reads without waiting behind the listing.
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
+    });
+    expect(lists).toBe(2);
   });
 
   it("reports when no supported device is connected", async () => {
