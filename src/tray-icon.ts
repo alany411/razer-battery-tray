@@ -22,6 +22,9 @@ const TONE_COLORS: Record<Taskbar, Record<Tone, Rgb>> = {
   },
 };
 
+/** Icon scales for 100% to 300% display scaling, so no taskbar gets a resampled pixel font. */
+export const ICON_SCALES = [1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const;
+
 const GLYPH_WIDTH = 3;
 const GLYPH_HEIGHT = 5;
 // The widest text the icon shows: "100".

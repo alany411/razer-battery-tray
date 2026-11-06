@@ -14,12 +14,10 @@ import { readStartsAtLogin } from "./startup-entry.js";
 import { findSynapse, openSynapse } from "./synapse.js";
 import type { SynapseLauncher } from "./synapse.js";
 import { readTaskbar } from "./taskbar-theme.js";
-import { renderIcon } from "./tray-icon.js";
+import { ICON_SCALES, renderIcon } from "./tray-icon.js";
 import type { Taskbar } from "./tray-icon.js";
 
 const POLL_INTERVAL_MS = 60_000;
-// Icon sizes for 100%, 150% and 200% display scaling.
-const ICON_SCALES = [1, 1.5, 2] as const;
 
 // Keyed by model name, like the displays.
 const alerts = new Map<string, LowBatteryAlerts>();

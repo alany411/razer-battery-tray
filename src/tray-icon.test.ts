@@ -1,6 +1,6 @@
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { renderIcon } from "./tray-icon.js";
+import { ICON_SCALES, renderIcon } from "./tray-icon.js";
 import type { Taskbar } from "./tray-icon.js";
 import type { Tone } from "./tray-display.js";
 
@@ -125,5 +125,21 @@ describe("renderIcon", () => {
     expect(
       renderIcon("87", "normal", 32, "dark").equals(renderIcon("86", "normal", 32, "dark")),
     ).toBe(false);
+  });
+
+  it("has a size for 100% to 300% display scaling, 125% and 175% included", () => {
+    expect(ICON_SCALES).toEqual([1, 1.25, 1.5, 1.75, 2, 2.5, 3]);
+  });
+
+  it.each([16, 20, 24, 28, 32, 40, 48])("draws all of 100 inside a %ipx icon", (size) => {
+    const pixels = inkOf("100", "normal", size);
+    const xs = pixels.map((p) => p.x);
+    const columns = new Set(xs).size;
+
+    // Three glyphs, each three font columns wide, every column inked, none cut off.
+    expect(columns % 9).toBe(0);
+    expect(columns).toBeGreaterThan(0);
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(1);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(size - 2);
   });
 });
