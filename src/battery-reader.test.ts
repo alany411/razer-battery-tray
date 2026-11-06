@@ -119,6 +119,36 @@ function hidProcess(devices: FakeDevice[], hangs: Set<string>) {
   return process satisfies HidTransport;
 }
 
+/**
+ * A poller whose rounds end within 5 ms though the HID timeout is 50 ms, and whose first open of
+ * the dongle runs until `finish`, so a round ends with it still running.
+ */
+function slowOpen() {
+  let finish = () => {};
+  let first = true;
+  const dongle = fakeTransport([
+    { productId: DONGLE_PRODUCT_ID, path: "dongle", respond: awake(255, false) },
+  ]);
+  const transport = {
+    restarts: 0,
+    list: dongle.list,
+    open: async (path: string) => {
+      if (first) {
+        first = false;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      }
+      return dongle.open(path);
+    },
+    restart: () => {
+      transport.restarts++;
+    },
+  };
+  const poll = createBatteryPoller(transport, { ...options, timeoutMs: 50, deadlineMs: 5 });
+  return { transport, poll, finish: () => finish() };
+}
+
 describe("pollBattery", () => {
   it("reads the percentage and charging flag through the dongle", async () => {
     const transport = fakeTransport([
@@ -1016,6 +1046,38 @@ describe("createBatteryPoller", () => {
       kind: "devices",
       devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
     });
+  });
+
+  it("lets an open still running for less than the HID timeout finish on an immediate rerun", async () => {
+    const { transport, poll, finish } = slowOpen();
+
+    await poll();
+    await poll();
+    finish();
+
+    expect(transport.restarts).toBe(0);
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ model: DEATHADDER_V3_PRO, result: { kind: "reading" } }],
+    });
+  });
+
+  it("restarts HID and quarantines an open once it has run for the HID timeout", async () => {
+    const { transport, poll } = slowOpen();
+
+    await poll();
+    await delay(60);
+
+    expect(await poll()).toEqual({
+      kind: "devices",
+      devices: [
+        {
+          model: DEATHADDER_V3_PRO,
+          result: { kind: "unavailable", reason: "device stopped responding" },
+        },
+      ],
+    });
+    expect(transport.restarts).toBe(1);
   });
 
   it("restarts HID to list devices again when an earlier listing still hangs", async () => {

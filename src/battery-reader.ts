@@ -92,7 +92,7 @@ export function createBatteryPoller(
   options: PollOptions = {},
 ): () => Promise<PollRound> {
   const memory: RoundMemory = { devices: new Map(), lastModels: [] };
-  const guarded = guard(transport);
+  const guarded = guard(transport, options.timeoutMs);
   return () => pollRound(guarded, () => transport.restart(), options, memory);
 }
 
@@ -348,8 +348,9 @@ interface GuardedTransport {
   /** Whether this round began with a restart. */
   restarted(): boolean;
   /**
-   * Calls `restart` if an open or listing from earlier is still running, since every new one would
-   * wait behind it, and quarantines the interface whose open hung.
+   * Calls `restart` if an open or listing from earlier has been running for the HID timeout, since
+   * every new one would wait behind it, and quarantines the interface whose open hung. One that has
+   * run for less, e.g. cut short by the deadline of a round just before, is left to finish.
    */
   newRound(restart: () => void): void;
 }
@@ -365,7 +366,7 @@ interface Calls {
   running: Map<string, number>;
   handles: Map<string, HidHandle>;
   /** The open or listing that is running. `path` is the interface being opened, if it is an open. */
-  head?: { path: string | undefined };
+  head?: { path: string | undefined; old: boolean };
   /** Opens and listings waiting for their turn, first come first served. */
   waiting: (() => void)[];
   listing?: Promise<HidDeviceInfo[]>;
@@ -380,7 +381,7 @@ interface Calls {
  * turn, gives the last listing while an open or listing is still running, restarts at the next
  * round, and `busy` tells which interfaces to leave alone.
  */
-function guard(transport: HidTransport): GuardedTransport {
+function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTransport {
   let calls = freshCalls();
   let restarted = false;
   // Keyed by path. Kept across restarts.
@@ -393,7 +394,7 @@ function guard(transport: HidTransport): GuardedTransport {
     restarted: () => restarted,
     newRound: (restart) => {
       for (const q of quarantine.values()) q.roundsLeft = Math.max(0, q.roundsLeft - 1);
-      const hung = calls.head;
+      const hung = calls.head?.old ? calls.head : undefined;
       restarted = hung !== undefined;
       if (!hung) return;
       if (hung.path !== undefined) {
@@ -413,7 +414,7 @@ function guard(transport: HidTransport): GuardedTransport {
         return Promise.resolve(current.lastListed);
       }
       if (current.listing) return timeout(current.listing, limit());
-      const listing = inTurn(current, undefined, limit, () => {
+      const listing = inTurn(current, timeoutMs, undefined, limit, () => {
         const call = transport.list();
         call.then(
           (listed) => {
@@ -443,7 +444,7 @@ function guard(transport: HidTransport): GuardedTransport {
       if (open) return open;
       let opened: Promise<HidHandle> | undefined;
       try {
-        return await inTurn(current, path, limit, () => {
+        return await inTurn(current, timeoutMs, path, limit, () => {
           opened = track(current, path, transport.open(path)).then((raw) => {
             quarantine.delete(path);
             const handle: HidHandle = {
@@ -479,6 +480,7 @@ function freshCalls(): Calls {
  */
 function inTurn<T>(
   calls: Calls,
+  timeoutMs: number,
   path: string | undefined,
   limit: Limit,
   start: () => Promise<T>,
@@ -487,10 +489,16 @@ function inTurn<T>(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const run = () => {
       clearTimeout(timer);
-      const head = { path };
+      const head = { path, old: false };
       calls.head = head;
+      // Set before the call's own time limit, so a call given the whole HID timeout is old by the
+      // time it times out.
+      const aging = setTimeout(() => {
+        head.old = true;
+      }, timeoutMs);
       const call = start();
       settled(call, () => {
+        clearTimeout(aging);
         if (calls.head === head) delete calls.head;
         calls.waiting.shift()?.();
       });
