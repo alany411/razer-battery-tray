@@ -143,14 +143,14 @@ function show(next: ReadonlyMap<string, TrayDisplay>): void {
   }
 }
 
-/** A tray with its stable GUID, or without one should Windows refuse it (see ADR 0003). */
+/** A tray with its stable GUID, or without one should `new Tray` throw for it (see ADR 0003). */
 function createTray(key: string, image: NativeImage): Tray {
   const guid = trayGuid(app.getPath("exe"), key);
   try {
     return new Tray(image, guid);
   } catch (error) {
     console.warn(
-      `Tray icon GUID ${guid} refused, so Windows will not remember its visibility:`,
+      `Tray icon GUID ${guid} not accepted, so Windows will not remember its visibility:`,
       error,
     );
     return new Tray(image);

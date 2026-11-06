@@ -1,6 +1,6 @@
 # Tray icons have stable GUIDs per key and exe path
 
-Windows 11 remembers whether a tray icon always shows or hides in the overflow by the icon's GUID, so each tray gets one: a UUIDv5 of the app's exe path and the tray's key (the model name, or the no-device key). The key keeps a device's choice across unplug and replug and across restarts. The exe path is in the hash because Windows binds an unsigned app's GUID to the path that first used it, and the same GUID from another path (`electron.exe` in development, a moved install) makes `new Tray` fail. If creating the tray with its GUID still throws, it is logged and the tray is created without one.
+Windows 11 remembers whether a tray icon always shows or hides in the overflow by the icon's GUID, so each tray gets one: a UUIDv5 of the app's exe path and the tray's key (the model name, or the no-device key). The key keeps a device's choice across unplug and replug and across restarts. The exe path is in the hash because Windows binds an unsigned app's GUID to the path that first used it, and the same GUID from another path (`electron.exe` in development, a moved install) makes `new Tray` fail. Electron does not report a GUID that Windows refuses; the tray just does not appear. Hashing the exe path is what prevents that, so there is no runtime check. If creating the tray with its GUID throws (e.g. a malformed GUID), it is logged and the tray is created without one.
 
 ## Considered Options
 
