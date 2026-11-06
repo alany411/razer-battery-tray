@@ -261,6 +261,21 @@ describe("pollBattery", () => {
     expect(await pollBattery(transport, options)).toEqual({ kind: "asleep" });
   });
 
+  it("reads the battery as not charging when only the charging request gets no answer", async () => {
+    const transport = fakeTransport([
+      {
+        productId: DONGLE_PRODUCT_ID,
+        path: "dongle",
+        respond: (request) => (request[7] === 0x80 ? 200 : { status: 0x04 }),
+      },
+    ]);
+
+    expect(await pollBattery(transport, options)).toEqual({
+      kind: "reading",
+      reading: { percent: 78, charging: false },
+    });
+  });
+
   it("reports unavailable when the dongle cannot be opened", async () => {
     const transport: HidTransport = {
       list: async () => [{ productId: DONGLE_PRODUCT_ID, path: "dongle" }],

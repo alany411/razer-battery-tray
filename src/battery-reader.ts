@@ -299,9 +299,14 @@ async function readFrom(
   const handle = await transport.open(candidate.path);
   try {
     const batteryByte = await query(handle, BATTERY_LEVEL, transactionId, sleep);
-    // Models on disposable batteries have no charging flag.
+    // Models on disposable batteries have no charging flag. The device just answered the battery
+    // request, so no answer to this one does not make it asleep.
     const charging =
-      model.rechargeable && (await query(handle, CHARGING_STATUS, transactionId, sleep)) === 1;
+      model.rechargeable &&
+      (await query(handle, CHARGING_STATUS, transactionId, sleep).catch((error: unknown) => {
+        if (error instanceof DeviceAsleepError) return 0;
+        throw error;
+      })) === 1;
     // A device that is truly empty is off, so a 0% reading through the dongle means it is asleep.
     if (link === "wireless" && batteryByte === 0 && !charging) {
       throw new DeviceAsleepError("device reported 0%");
