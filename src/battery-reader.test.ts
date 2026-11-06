@@ -10,7 +10,7 @@ import type {
 import { DEVICE_TABLE } from "./device-table.js";
 import type { DeviceModel } from "./device-table.js";
 
-type Responder = (request: Uint8Array) => number | "error" | { status: number };
+type Responder = (request: Uint8Array) => number | "error" | "mismatched" | { status: number };
 
 interface FakeDevice extends HidDeviceInfo {
   respond: Responder;
@@ -50,7 +50,11 @@ function fakeTransport(devices: FakeDevice[]): HidTransport & { opened: string[]
             last[1] === (device.transactionId ?? 0x1f) ? device.respond(last) : "error";
           if (answer === "error") throw new Error("read failed");
           const response = Uint8Array.from(last);
-          if (typeof answer === "number") {
+          if (answer === "mismatched") {
+            // An answer to another request, e.g. one Synapse sent.
+            response[0] = 0x02;
+            response[7] = 0x8f;
+          } else if (typeof answer === "number") {
             response[0] = 0x02;
             response[9] = answer;
           } else {
@@ -274,6 +278,60 @@ describe("pollBattery", () => {
       kind: "reading",
       reading: { percent: 78, charging: false },
     });
+  });
+
+  it.each([
+    { name: "is busy", first: { status: 0x01 } as const },
+    { name: "sends another request's answer", first: "mismatched" as const },
+  ])("keeps the handle open when the device $name, and reads again", async ({ first }) => {
+    let answered = false;
+    const transport = fakeTransport([
+      {
+        productId: DONGLE_PRODUCT_ID,
+        path: "dongle",
+        respond: (request) => {
+          if (answered) return awake(255, false)(request);
+          answered = true;
+          return first;
+        },
+      },
+    ]);
+
+    expect(await pollBattery(transport, options)).toEqual({
+      kind: "reading",
+      reading: { percent: 100, charging: false },
+    });
+    expect(transport.opened).toEqual(["dongle"]);
+  });
+
+  it("reads again once within the same request when the device is busy", async () => {
+    const answers: (number | { status: number })[] = [{ status: 0x01 }, 255, 0];
+    const sent: number[] = [];
+    const transport = fakeTransport([
+      {
+        productId: DONGLE_PRODUCT_ID,
+        path: "dongle",
+        respond: () => answers.shift() ?? "error",
+      },
+    ]);
+    const open = transport.open;
+    transport.open = async (path) => {
+      const handle = await open(path);
+      return {
+        ...handle,
+        sendFeatureReport: (data) => {
+          sent.push(data[8] ?? 0);
+          return handle.sendFeatureReport(data);
+        },
+      };
+    };
+
+    expect(await pollBattery(transport, options)).toEqual({
+      kind: "reading",
+      reading: { percent: 100, charging: false },
+    });
+    // The battery request went out once; only the charging request followed it.
+    expect(sent).toEqual([0x80, 0x84]);
   });
 
   it("reports unavailable when the dongle cannot be opened", async () => {

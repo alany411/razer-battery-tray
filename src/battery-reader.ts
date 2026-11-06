@@ -313,9 +313,12 @@ async function readFrom(
     }
     return { percent: Math.round((batteryByte / 255) * 100), charging };
   } catch (error) {
-    // The handle stays open for the next poll unless something went wrong with it. A device that
-    // did not answer still has a working handle, and opening again may wait behind a hung open.
-    if (!(error instanceof DeviceAsleepError)) await handle.close().catch(() => {});
+    // The handle stays open for the next poll unless a call on it failed. A device that did not
+    // answer, or answered something else (e.g. Synapse's request), still has a working handle, and
+    // opening again may wait behind a hung open.
+    if (!(error instanceof DeviceAsleepError || error instanceof ProtocolError)) {
+      await handle.close().catch(() => {});
+    }
     throw error;
   }
 }
@@ -329,12 +332,17 @@ async function query(
   const report = new Uint8Array(REPORT_LENGTH + 1);
   report.set(buildRequest(command, transactionId), 1);
   await handle.sendFeatureReport(report);
-  await sleep(RESPONSE_DELAY_MS);
-  const parsed = parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));
+  const read = async () => {
+    await sleep(RESPONSE_DELAY_MS);
+    return parseResponse(command, await handle.getFeatureReport(0, REPORT_LENGTH + 1));
+  };
+  let parsed = await read();
+  // A busy device may have the answer ready a moment later, without asking again.
+  if (!parsed.ok && parsed.busy) parsed = await read();
   if (!parsed.ok)
     throw parsed.deviceDidNotAnswer
       ? new DeviceAsleepError(parsed.reason)
-      : new Error(parsed.reason);
+      : new ProtocolError(parsed.reason);
   return parsed.value;
 }
 
@@ -562,6 +570,9 @@ function timeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 /** The device did not answer the request, or answered 0% through the dongle while not charging. */
 class DeviceAsleepError extends Error {}
+
+/** A response came back, but not the answer: a busy or other status, or another request's answer. */
+class ProtocolError extends Error {}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

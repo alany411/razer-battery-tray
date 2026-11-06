@@ -13,6 +13,8 @@
 
 export const REPORT_LENGTH = 90;
 
+// The device is still working on an earlier request; its answer may be ready a moment later.
+const STATUS_BUSY = 0x01;
 const STATUS_SUCCESS = 0x02;
 // The statuses a dongle sends back when the device it relays to does not respond.
 const STATUS_FAILURE = 0x03;
@@ -34,11 +36,12 @@ export const CHARGING_STATUS: Command = { commandClass: 0x07, commandId: 0x84, d
 
 /**
  * `deviceDidNotAnswer` is true when a well-formed response came back with a failure or timeout
- * status: whatever relayed the request answered, but the device did not.
+ * status: whatever relayed the request answered, but the device did not. `busy` is true when it came
+ * back with the busy status, so reading it again shortly may give the answer.
  */
 export type ParsedResponse =
   | { ok: true; value: number }
-  | { ok: false; reason: string; deviceDidNotAnswer: boolean };
+  | { ok: false; reason: string; deviceDidNotAnswer: boolean; busy: boolean };
 
 /** `transactionId` depends on the model and connection (0x1F on most current devices). */
 export function buildRequest(command: Command, transactionId: number): Uint8Array {
@@ -55,10 +58,15 @@ export function parseResponse(command: Command, response: Uint8Array): ParsedRes
   // On Windows the report ID (0) comes back as the first byte.
   const report = response.length === REPORT_LENGTH + 1 ? response.subarray(1) : response;
   if (report.length !== REPORT_LENGTH) {
-    return { ok: false, reason: `unexpected length ${response.length}`, deviceDidNotAnswer: false };
+    return {
+      ok: false,
+      reason: `unexpected length ${response.length}`,
+      deviceDidNotAnswer: false,
+      busy: false,
+    };
   }
   if (report[6] !== command.commandClass || report[7] !== command.commandId) {
-    return { ok: false, reason: "mismatched command", deviceDidNotAnswer: false };
+    return { ok: false, reason: "mismatched command", deviceDidNotAnswer: false, busy: false };
   }
   const status = report[0] ?? 0;
   if (status !== STATUS_SUCCESS) {
@@ -66,6 +74,7 @@ export function parseResponse(command: Command, response: Uint8Array): ParsedRes
       ok: false,
       reason: `status 0x${status.toString(16).padStart(2, "0")}`,
       deviceDidNotAnswer: status === STATUS_FAILURE || status === STATUS_TIMEOUT,
+      busy: status === STATUS_BUSY,
     };
   }
   return { ok: true, value: report[VALUE_OFFSET] ?? 0 };
