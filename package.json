@@ -7,7 +7,7 @@
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "start": "pnpm build && electron .",
     "dist": "pnpm build && electron-builder --win --x64",
     "typecheck": "tsc --noEmit",
@@ -37,9 +37,12 @@
     "files": [
       "dist/**/*",
       "!dist/**/*.map",
+      "!dist/**/*.test.js",
       "!node_modules/node-hid/prebuilds/HID*-{linux,darwin}-*/**",
       "!node_modules/node-hid/prebuilds/HID-win32-{ia32,arm64}/**",
-      "!node_modules/node-hid/{src,hidapi}/**"
+      "!node_modules/node-hid/{src,hidapi}/**",
+      "!node_modules/node-hid/build/**",
+      "node_modules/node-hid/build/Release/*.node"
     ],
     "asarUnpack": [
       "node_modules/node-hid/**"
