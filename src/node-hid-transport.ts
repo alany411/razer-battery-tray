@@ -4,7 +4,8 @@ import type { HidDeviceInfo, HidHandle, HidTransport } from "./battery-reader.js
 
 export const nodeHidTransport: HidTransport = {
   async list(): Promise<HidDeviceInfo[]> {
-    const devices = await nodeHid.devicesAsync();
+    // Filtered by hidapi, so it does not read the strings of every other HID device.
+    const devices = await nodeHid.devicesAsync(RAZER_VENDOR_ID, 0);
     return devices.flatMap(({ vendorId, productId, path }) =>
       vendorId === RAZER_VENDOR_ID && path ? [{ productId, path }] : [],
     );
