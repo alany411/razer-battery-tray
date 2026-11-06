@@ -5,6 +5,9 @@ import { remoteHidTransport, serveHid } from "./hid-process.js";
 import type { SpawnHidProcess } from "./hid-process.js";
 
 const DONGLE = { productId: 0x00b7, path: "dongle" };
+const CRASH = { productId: 0x00b7, path: "crash" };
+const CONTROL = { productId: 0x00b7, path: "control" };
+const VIPER = { productId: 0x00c1, path: "viper" };
 
 const hang = () => new Promise<never>(() => {});
 
@@ -168,18 +171,70 @@ describe("remoteHidTransport", () => {
     expect(spawned).toHaveLength(1);
   });
 
-  it("reads devices again on the next poll after the HID process exits", async () => {
-    const { spawn, spawned } = processes(dongle);
-    const poll = createBatteryPoller(remoteHidTransport(spawn), { sleep: async () => {} });
+  it("reads every device on the first attempt of the next poll after the HID process exits", async () => {
+    const { spawn, spawned } = processes(() => ({
+      ...dongle(),
+      list: async () => [DONGLE, VIPER],
+    }));
+    const sleeps: number[] = [];
+    const poll = createBatteryPoller(remoteHidTransport(spawn), {
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
 
     await poll();
     spawned[0]?.exit();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    sleeps.length = 0;
 
     expect(await poll()).toMatchObject({
       kind: "devices",
-      devices: [{ result: { kind: "reading", reading: { percent: 100 } } }],
+      devices: [
+        { result: { kind: "reading", reading: { percent: 100 } } },
+        { result: { kind: "reading", reading: { percent: 100 } } },
+      ],
     });
+    // No attempt was spent on a handle from the process that exited, so nothing waited to retry.
+    expect(sleeps.every((ms) => ms < 500)).toBe(true);
     expect(spawned).toHaveLength(2);
+  });
+
+  it("quarantines an interface whose open makes the HID process exit", async () => {
+    const opened: string[] = [];
+    const { spawn, spawned } = processes(() => ({
+      list: async () => [CRASH, CONTROL, VIPER],
+      open: (path) => {
+        opened.push(path);
+        if (path === CRASH.path) {
+          spawned.at(-1)?.exit();
+          return hang();
+        }
+        return dongle().open(path);
+      },
+    }));
+    const poll = createBatteryPoller(remoteHidTransport(spawn), {
+      sleep: async () => {},
+      timeoutMs: 50,
+    });
+    const stoppedResponding = { kind: "unavailable", reason: "device stopped responding" };
+
+    // The interface on the same dongle waits too, in case it makes the new process exit as well.
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ result: stoppedResponding }, { result: { kind: "reading" } }],
+    });
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ result: stoppedResponding }, { result: { kind: "reading" } }],
+    });
+    expect(opened.filter((path) => path === CRASH.path)).toEqual([CRASH.path]);
+    expect(opened).not.toContain(CONTROL.path);
+
+    expect(await poll()).toMatchObject({
+      kind: "devices",
+      devices: [{ result: { kind: "reading" } }, { result: { kind: "reading" } }],
+    });
+    expect(opened.filter((path) => path === CRASH.path)).toEqual([CRASH.path]);
   });
 });

@@ -55,6 +55,11 @@ export interface RestartableHidTransport extends HidTransport {
    * Handles opened before stop working.
    */
   restart(): void;
+  /**
+   * Calls `listener` each time the HID work ends on its own, not through `restart`, e.g. when an
+   * open crashes it. Handles opened before stop working, and calls still running fail.
+   */
+  onExit?(listener: () => void): void;
 }
 
 export interface PollOptions {
@@ -98,6 +103,7 @@ export function createBatteryPoller(
 ): () => Promise<PollRound> {
   const memory: RoundMemory = { devices: new Map(), lastModels: [] };
   const guarded = guard(transport, options.timeoutMs);
+  transport.onExit?.(() => guarded.exited());
   return () => pollRound(guarded, () => transport.restart(), options, memory);
 }
 
@@ -377,6 +383,12 @@ interface GuardedTransport {
    * finish.
    */
   newRound(restart: () => void): void;
+  /**
+   * Forgets every call and handle, since the HID work ended on its own. An open running at that
+   * moment may have ended it, so its interface is quarantined at once, and the other interfaces on
+   * its connection wait for the rest of this round and the next, as after a restart.
+   */
+  exited(): void;
 }
 
 interface Quarantine {
@@ -399,9 +411,15 @@ interface Calls {
   /** The open or listing that is running. `path` is the interface being opened, if it is an open. */
   head?: { path: string | undefined; old: boolean };
   /** Opens and listings waiting for their turn, first come first served. */
-  waiting: (() => void)[];
+  waiting: Waiting[];
   listing?: Promise<HidDeviceInfo[]>;
   lastListed?: HidDeviceInfo[];
+}
+
+interface Waiting {
+  start(): void;
+  /** Gives up waiting, e.g. because the HID work these calls were for has ended. */
+  cancel(error: Error): void;
 }
 
 /**
@@ -415,6 +433,22 @@ interface Calls {
 function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTransport {
   let calls = freshCalls();
   let restarted = false;
+  /** Whether the next round counts as a restart, since an open ended the HID work on its own. */
+  let exitedOpening = false;
+  // Each hang doubles the rounds an interface is left alone: 1, 2, 4 and so on. `extra` covers the
+  // rest of the round it hung in.
+  const quarantineHang = (path: string, extra = 0) => {
+    const hangs = (quarantine.get(path)?.hangs ?? 0) + 1;
+    quarantine.set(path, {
+      hangs,
+      roundsLeft: Math.min(2 ** (hangs - 1), MAX_QUARANTINE_ROUNDS) + extra,
+    });
+  };
+  const dropCalls = (reason: string) => {
+    for (const waiting of calls.waiting) waiting.cancel(new Error(reason));
+    calls.waiting = [];
+    calls = freshCalls();
+  };
   // Keyed by path. Kept across restarts.
   const quarantine = new Map<string, Quarantine>();
 
@@ -437,15 +471,22 @@ function guard(transport: HidTransport, timeoutMs = HID_TIMEOUT_MS): GuardedTran
       );
       const hungOpen = calls.head?.old ? calls.head : undefined;
       if (hungOpen?.path !== undefined) hung.add(hungOpen.path);
-      restarted = hungOpen !== undefined || hung.size > 0;
-      if (!restarted) return;
-      for (const path of hung) {
-        // Each hang doubles the rounds it is left alone: 1, 2, 4 and so on.
-        const hangs = (quarantine.get(path)?.hangs ?? 0) + 1;
-        quarantine.set(path, { hangs, roundsLeft: Math.min(2 ** (hangs - 1), MAX_QUARANTINE_ROUNDS) });
-      }
-      calls = freshCalls();
+      const restarting = hungOpen !== undefined || hung.size > 0;
+      restarted = restarting || exitedOpening;
+      exitedOpening = false;
+      if (!restarting) return;
+      for (const path of hung) quarantineHang(path);
+      dropCalls("HID process restarted");
       restart();
+    },
+    exited: () => {
+      const opening = calls.head?.path;
+      if (opening !== undefined) {
+        quarantineHang(opening, 1);
+        restarted = true;
+        exitedOpening = true;
+      }
+      dropCalls("HID process exited");
     },
     list: (limit) => {
       const current = calls;
@@ -529,6 +570,7 @@ function inTurn<T>(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const run = () => {
       clearTimeout(timer);
+      if (calls.waiting[0] === waiting) calls.waiting.shift();
       const head = { path, old: false };
       calls.head = head;
       // Set before the call's own time limit, so a call given the whole HID timeout is old by the
@@ -540,14 +582,21 @@ function inTurn<T>(
       settled(call, () => {
         clearTimeout(aging);
         if (calls.head === head) delete calls.head;
-        calls.waiting.shift()?.();
+        calls.waiting[0]?.start();
       });
       timeout(call, limit()).then(resolve, reject);
     };
+    const waiting: Waiting = {
+      start: run,
+      cancel: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    };
     if (!calls.head && calls.waiting.length === 0) return run();
-    calls.waiting.push(run);
+    calls.waiting.push(waiting);
     timer = setTimeout(() => {
-      calls.waiting.splice(calls.waiting.indexOf(run), 1);
+      calls.waiting.splice(calls.waiting.indexOf(waiting), 1);
       reject(new Error("HID request timed out"));
     }, limit());
   });
