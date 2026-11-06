@@ -50,4 +50,25 @@ describe("rerunQueue", () => {
 
     expect(runs).toBe(2);
   });
+
+  it("runs the queued rerun when the current run throws, then rejects with the first error", async () => {
+    const gate = deferred();
+    let runs = 0;
+    const run = rerunQueue(async () => {
+      runs++;
+      if (runs === 1) {
+        await gate.promise;
+        throw new Error("first");
+      }
+      throw new Error("second");
+    });
+
+    const first = run();
+    const queued = run();
+    gate.resolve();
+
+    await expect(first).rejects.toThrow("first");
+    await expect(queued).rejects.toThrow("first");
+    expect(runs).toBe(2);
+  });
 });
