@@ -1,8 +1,18 @@
 import { join } from "node:path";
-import { Menu, Notification, Tray, app, nativeImage, nativeTheme, utilityProcess } from "electron";
+import {
+  Menu,
+  Notification,
+  Tray,
+  app,
+  nativeImage,
+  nativeTheme,
+  powerMonitor,
+  utilityProcess,
+} from "electron";
 import type { NativeImage } from "electron";
 import { APP_ID } from "./app-id.js";
 import { cachedValue } from "./cached-value.js";
+import { delayedRun } from "./delayed-run.js";
 import { createBatteryPoller } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
 import { remoteHidTransport } from "./hid-process.js";
@@ -20,6 +30,8 @@ import { ICON_SCALES, renderIcon } from "./tray-icon.js";
 import type { Taskbar } from "./tray-icon.js";
 
 const POLL_INTERVAL_MS = 60_000;
+// Long enough after waking for USB and the dongle to come back.
+const RESUME_POLL_DELAY_MS = 5000;
 
 // Keyed by model name, like the displays.
 const alerts = new Map<string, LowBatteryAlerts>();
@@ -49,6 +61,11 @@ function start(): void {
 
   void poll();
   setInterval(() => void poll(), POLL_INTERVAL_MS);
+
+  // A reading from before sleep is stale, and a dongle confused by the resume is caught sooner.
+  const pollAfterResume = delayedRun(RESUME_POLL_DELAY_MS, () => void poll());
+  powerMonitor.on("resume", () => pollAfterResume.schedule());
+  powerMonitor.on("unlock-screen", () => pollAfterResume.schedule());
 }
 
 async function followTaskbar(): Promise<void> {
