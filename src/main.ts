@@ -1,7 +1,18 @@
 import { join } from "node:path";
-import { Menu, Notification, Tray, app, nativeImage, nativeTheme, utilityProcess } from "electron";
+import {
+  Menu,
+  Notification,
+  Tray,
+  app,
+  nativeImage,
+  nativeTheme,
+  powerMonitor,
+  utilityProcess,
+} from "electron";
 import type { NativeImage } from "electron";
 import { APP_ID } from "./app-id.js";
+import { cachedValue } from "./cached-value.js";
+import { delayedRun } from "./delayed-run.js";
 import { createBatteryPoller } from "./battery-reader.js";
 import type { BatteryReading } from "./battery-reader.js";
 import { remoteHidTransport } from "./hid-process.js";
@@ -14,37 +25,76 @@ import { readStartsAtLogin } from "./startup-entry.js";
 import { findSynapse, openSynapse } from "./synapse.js";
 import type { SynapseLauncher } from "./synapse.js";
 import { readTaskbar } from "./taskbar-theme.js";
-import { renderIcon } from "./tray-icon.js";
+import { trayGuid } from "./tray-guid.js";
+import { ICON_SCALES, renderIcon } from "./tray-icon.js";
 import type { Taskbar } from "./tray-icon.js";
 
 const POLL_INTERVAL_MS = 60_000;
-// Icon sizes for 100%, 150% and 200% display scaling.
-const ICON_SCALES = [1, 1.5, 2] as const;
+// Long enough after waking for USB and the dongle to come back.
+const RESUME_POLL_DELAY_MS = 5000;
 
 // Keyed by model name, like the displays.
 const alerts = new Map<string, LowBatteryAlerts>();
 // HID runs in its own process, restarted when an open or listing hangs.
-const pollBattery = createBatteryPoller(remoteHidTransport(forkHidProcess));
+const hidTransport = remoteHidTransport(forkHidProcess);
+const pollBattery = createBatteryPoller(hidTransport);
 const trays = new Map<string, Tray>();
 let taskbar: Taskbar = "dark";
 let displays: ReadonlyMap<string, TrayDisplay> = READING_DISPLAYS;
+// What the menu shows, read at start and after each round instead of as the menu opens.
+const startsAtLogin = cachedValue(false, () => readStartsAtLogin(APP_ID, process.execPath));
+const synapseLauncher = cachedValue<SynapseLauncher | undefined>(undefined, findSynapse);
+
+// Set on quit, so a round still running does not redraw or start a HID process during shutdown.
+let quitting = false;
+let pollTimer: ReturnType<typeof setInterval> | undefined;
+const pollAfterResume = delayedRun(RESUME_POLL_DELAY_MS, poll);
 
 if (app.requestSingleInstanceLock()) {
   app.setAppUserModelId(APP_ID);
-  void app.whenReady().then(start);
+  app.on("before-quit", stop);
+  app
+    .whenReady()
+    .then(start)
+    .catch((error: unknown) => {
+      // Otherwise the app would hold the single-instance lock with no tray icon.
+      console.error("Could not start:", error);
+      app.quit();
+    });
 } else {
   app.quit();
 }
 
 function start(): void {
   show(displays);
+  refreshMenuState();
 
   // Redraw in the taskbar's colours when Windows switches between light and dark.
   nativeTheme.on("updated", () => void followTaskbar());
   void followTaskbar();
 
-  void poll();
-  setInterval(() => void poll(), POLL_INTERVAL_MS);
+  poll();
+  pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+
+  // A reading from before sleep is stale, and a dongle confused by the resume is caught sooner.
+  powerMonitor.on("resume", () => pollAfterResume.schedule());
+  powerMonitor.on("unlock-screen", () => pollAfterResume.schedule());
+}
+
+function stop(): void {
+  quitting = true;
+  clearInterval(pollTimer);
+  pollAfterResume.cancel();
+  for (const tray of trays.values()) tray.destroy();
+  trays.clear();
+  // Kills the HID process, ending any call still running in it.
+  hidTransport.restart();
+}
+
+/** Polls every device in one round, logging a round that failed; does nothing once quitting. */
+function poll(): void {
+  if (quitting) return;
+  pollQueue().catch((error: unknown) => console.warn("Round failed:", error));
 }
 
 async function followTaskbar(): Promise<void> {
@@ -55,8 +105,9 @@ async function followTaskbar(): Promise<void> {
 }
 
 // Refresh now during a poll queues another poll instead of being dropped.
-const poll = rerunQueue(async () => {
+const pollQueue = rerunQueue(async () => {
   const round = await pollBattery();
+  if (quitting) return;
   // Also catches theme changes Electron does not report.
   taskbar = await readTaskbar();
   if (round.kind === "none" && round.reason) console.warn(`No device listed: ${round.reason}`);
@@ -67,13 +118,17 @@ const poll = rerunQueue(async () => {
     if (result.kind === "reading") notifyIfLow(model.name, result.reading);
   }
   show(describeRound(round));
+  refreshMenuState();
 });
 
 /** Gives each display its own tray icon, removing icons for devices no longer listed. */
 function show(next: ReadonlyMap<string, TrayDisplay>): void {
+  if (quitting) return;
   displays = next;
   for (const [key, tray] of trays) {
     if (next.has(key)) continue;
+    // Its menu may never report closing once the tray is gone.
+    if (tray === menuTray) menuTray = undefined;
     tray.destroy();
     trays.delete(key);
   }
@@ -82,7 +137,7 @@ function show(next: ReadonlyMap<string, TrayDisplay>): void {
     if (tray) {
       tray.setImage(trayIcon(display));
     } else {
-      tray = new Tray(trayIcon(display));
+      tray = createTray(key, trayIcon(display));
       onRightClick(tray, key);
       trays.set(key, tray);
     }
@@ -90,30 +145,51 @@ function show(next: ReadonlyMap<string, TrayDisplay>): void {
   }
 }
 
-function onRightClick(tray: Tray, key: string): void {
-  // Build the menu as it opens, so the Start with Windows checkbox is never stale.
-  tray.on("right-click", () => {
-    void Promise.all([readStartsAtLogin(APP_ID, process.execPath), findSynapse()]).then(
-      ([startsAtLogin, synapse]) => {
-        const display = displays.get(key);
-        if (display && !tray.isDestroyed()) {
-          tray.popUpContextMenu(menu(display, startsAtLogin, synapse));
-        }
-      },
+/** A tray with its stable GUID, or without one should `new Tray` throw for it (see ADR 0003). */
+function createTray(key: string, image: NativeImage): Tray {
+  const guid = trayGuid(app.getPath("exe"), key);
+  try {
+    return new Tray(image, guid);
+  } catch (error) {
+    console.warn(
+      `Tray icon GUID ${guid} not accepted, so Windows will not remember its visibility:`,
+      error,
     );
+    return new Tray(image);
+  }
+}
+
+// The tray whose menu is open: only one menu at a time, so a quick second right-click does not
+// queue another.
+let menuTray: Tray | undefined;
+
+function onRightClick(tray: Tray, key: string): void {
+  // Built from cached state, so the menu opens without waiting on the registry or a disk scan.
+  tray.on("right-click", () => {
+    const display = displays.get(key);
+    if (menuTray || !display || tray.isDestroyed()) return;
+    const contextMenu = menu(display);
+    menuTray = tray;
+    contextMenu.once("menu-will-close", () => {
+      if (menuTray === tray) menuTray = undefined;
+    });
+    try {
+      tray.popUpContextMenu(contextMenu);
+    } catch (error) {
+      // Otherwise no tray would open a menu again, Quit included.
+      menuTray = undefined;
+      console.warn("Could not open the tray menu:", error);
+    }
   });
 }
 
-function menu(
-  display: TrayDisplay,
-  startsAtLogin: boolean,
-  synapse: SynapseLauncher | undefined,
-): Menu {
+function menu(display: TrayDisplay): Menu {
+  const synapse = synapseLauncher.get();
   return Menu.buildFromTemplate([
     { label: display.tooltip, enabled: false },
     ...(display.detail ? [{ label: display.detail, enabled: false }] : []),
     { type: "separator" },
-    { label: "Refresh now", click: () => void poll() },
+    { label: "Refresh now", click: poll },
     {
       label: "Open Synapse",
       enabled: synapse !== undefined,
@@ -122,14 +198,23 @@ function menu(
     {
       label: "Start with Windows",
       type: "checkbox",
-      checked: startsAtLogin,
+      checked: startsAtLogin.get(),
       // A dev run would write a Run entry that launches the dev electron.exe.
       enabled: app.isPackaged,
-      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+      click: (item) => {
+        app.setLoginItemSettings({ openAtLogin: item.checked });
+        startsAtLogin.set(item.checked);
+      },
     },
     { type: "separator" },
     { label: "Quit", role: "quit" },
   ]);
+}
+
+/** Reads what the menu shows again in the background. */
+function refreshMenuState(): void {
+  void startsAtLogin.refresh();
+  void synapseLauncher.refresh();
 }
 
 function trayIcon({ iconText, tone }: TrayDisplay): NativeImage {
@@ -152,11 +237,18 @@ function notifyIfLow(name: string, reading: BatteryReading): void {
 }
 
 function forkHidProcess(onMessage: (message: HidMessage) => void, onExit: () => void): HidProcess {
+  if (quitting) {
+    // A round still running during shutdown gets no new process; its calls fail at once.
+    queueMicrotask(onExit);
+    return { post: () => {}, kill: () => {} };
+  }
   const child = utilityProcess.fork(join(import.meta.dirname, "hid-process-entry.js"), [], {
     serviceName: "Razer Battery Tray HID",
   });
   child.on("message", onMessage);
   child.on("exit", onExit);
+  // The exit event follows, which restarts the process at the next call.
+  child.on("error", (type, location) => console.warn(`HID process ${type} at ${location}`));
   return {
     // A utility process takes no target origin, unlike a window.
     // oxlint-disable-next-line unicorn/require-post-message-target-origin
