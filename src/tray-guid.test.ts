@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { NO_DEVICE } from "./tray-display.js";
 import { trayGuid, uuidV5 } from "./tray-guid.js";
 
 const EXE = String.raw`C:\Users\me\AppData\Local\Programs\razer-battery-tray\Razer Battery Tray.exe`;
@@ -25,7 +26,7 @@ describe("trayGuid", () => {
 
   it("differs per key, the no-device key included", () => {
     const guids = new Set(
-      ["DeathAdder V3 Pro", "Viper V3 Pro", ""].map((key) => trayGuid(EXE, key)),
+      ["DeathAdder V3 Pro", "Viper V3 Pro", NO_DEVICE].map((key) => trayGuid(EXE, key)),
     );
 
     expect(guids.size).toBe(3);
