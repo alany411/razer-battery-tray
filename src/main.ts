@@ -41,11 +41,11 @@ const pollBattery = createBatteryPoller(hidTransport);
 const trays = new Map<string, Tray>();
 let taskbar: Taskbar = "dark";
 let displays: ReadonlyMap<string, TrayDisplay> = READING_DISPLAYS;
-// What the menu shows, read at start and after each poll instead of as the menu opens.
+// What the menu shows, read at start and after each round instead of as the menu opens.
 const startsAtLogin = cachedValue(false, () => readStartsAtLogin(APP_ID, process.execPath));
 const synapseLauncher = cachedValue<SynapseLauncher | undefined>(undefined, findSynapse);
 
-// Set on quit, so a poll still running does not redraw or start a HID process during shutdown.
+// Set on quit, so a round still running does not redraw or start a HID process during shutdown.
 let quitting = false;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 const pollAfterResume = delayedRun(RESUME_POLL_DELAY_MS, poll);
@@ -91,10 +91,10 @@ function stop(): void {
   hidTransport.restart();
 }
 
-/** Polls every device, logging a poll that failed; does nothing once the app is quitting. */
+/** Polls every device in one round, logging a round that failed; does nothing once quitting. */
 function poll(): void {
   if (quitting) return;
-  pollQueue().catch((error: unknown) => console.warn("Poll failed:", error));
+  pollQueue().catch((error: unknown) => console.warn("Round failed:", error));
 }
 
 async function followTaskbar(): Promise<void> {
@@ -229,7 +229,7 @@ function notifyIfLow(name: string, reading: BatteryReading): void {
 
 function forkHidProcess(onMessage: (message: HidMessage) => void, onExit: () => void): HidProcess {
   if (quitting) {
-    // A poll still running during shutdown gets no new process; its calls fail at once.
+    // A round still running during shutdown gets no new process; its calls fail at once.
     queueMicrotask(onExit);
     return { post: () => {}, kill: () => {} };
   }
