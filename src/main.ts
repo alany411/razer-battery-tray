@@ -123,6 +123,8 @@ function menu(
       label: "Start with Windows",
       type: "checkbox",
       checked: startsAtLogin,
+      // A dev run would write a Run entry that launches the dev electron.exe.
+      enabled: app.isPackaged,
       click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
     },
     { type: "separator" },
